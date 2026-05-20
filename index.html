@@ -298,6 +298,14 @@ label{font-size:0.65rem;color:var(--muted2);letter-spacing:.8px;text-transform:u
 .sched-chip.on{border-color:rgba(74,143,212,.4);color:var(--blue);background:var(--blueg)}
 .day-assign{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--b0)}
 .day-assign:last-child{border-bottom:none}
+.phase-grid{width:100%;border-collapse:collapse;margin-top:4px}
+.phase-grid th{font-size:0.6rem;color:var(--muted2);text-transform:uppercase;letter-spacing:.8px;font-weight:600;padding:5px 6px;text-align:center;border-bottom:1px solid var(--b0)}
+.phase-grid th.day-th{text-align:left;padding-left:2px}
+.phase-grid td{padding:4px 4px;border-bottom:1px solid var(--b0);vertical-align:middle}
+.phase-grid tr:last-child td{border-bottom:none}
+.phase-grid td select{font-size:14px;padding:6px 8px}
+.phase-day-lbl{font-family:'Barlow Condensed',sans-serif;font-size:0.88rem;font-weight:700;color:var(--muted2);letter-spacing:.5px;white-space:nowrap;padding-right:4px}
+.day-assign:last-child{border-bottom:none}
 .day-lbl{font-family:'Barlow Condensed',sans-serif;font-size:0.88rem;font-weight:700;letter-spacing:.5px;color:var(--muted2);min-width:48px}
 
 /* ═══ HISTORY ═══ */
@@ -569,7 +577,11 @@ function getWorkoutForDate(ds){
   const d=new Date(ds+'T12:00:00'),start=new Date(phase.startDate+'T12:00:00');
   const diff=Math.floor((d-start)/86400000);
   if(diff<0||diff>=phase.weeks*7)return null;
-  const s=phase.schedule.find(x=>x.day===d.getDay());
+  const weekIdx=Math.floor(diff/7); // 0-based week index
+  const dow=d.getDay();
+  // Try per-week schedule first, fall back to global (day-only) for backward compat
+  let s=phase.schedule.find(x=>x.week===weekIdx&&x.day===dow);
+  if(!s) s=phase.schedule.find(x=>x.week===undefined&&x.day===dow);
   if(!s?.workoutId)return null;
   const wo=DB.workouts().find(w=>w.id===s.workoutId)||null;
   return resolveExercises(wo,ds);
@@ -1143,27 +1155,86 @@ function dupPhase(id){
 }
 function openNewPhase(){EP={id:uid(),name:'',weeks:4,daysPerWeek:5,startDate:todayStr(),schedule:[]};renderPM('New Phase');}
 function editPhase(id){EP=JSON.parse(JSON.stringify(DB.phases().find(p=>p.id===id)));renderPM('Edit Phase');}
+function buildScheduleGrid(ws,p,numWeeks){
+  if(!ws.length)return'<p style="color:var(--muted2);font-size:0.82rem">Build workouts first.</p>';
+  const woOpts=ws.map(wo=>`<option value="${wo.id}">${wo.name}</option>`).join('');
+  // Build table: rows = days, cols = weeks
+  let h=`<div style="overflow-x:auto"><table class="phase-grid"><thead><tr>
+    <th class="day-th"></th>
+    ${Array.from({length:numWeeks},(_,w)=>`<th>Wk ${w+1}</th>`).join('')}
+  </tr></thead><tbody>`;
+  DAYS.forEach((d,i)=>{
+    h+=`<tr><td class="phase-day-lbl">${d}</td>`;
+    for(let w=0;w<numWeeks;w++){
+      const s=p.schedule?.find(x=>x.week===w&&x.day===i);
+      const fallback=p.schedule?.find(x=>x.week===undefined&&x.day===i);
+      // Week 1 (w=0) uses saved or fallback; other weeks copy week 1 as default if no specific value
+      const week1val=p.schedule?.find(x=>x.week===0&&x.day===i)?.workoutId||fallback?.workoutId||'';
+      const curVal=s?.workoutId||(w>0&&!p.schedule?.some(x=>x.week>0)?week1val:'')||'';
+      h+=`<td><select id="ps-${w}-${i}" onchange="pmWeek1Change(${w},${i})">
+        <option value="">— Rest —</option>${woOpts.replace(`value="${curVal}"`,`value="${curVal}" selected`)}
+      </select></td>`;
+    }
+    h+=`</tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+function pmWeek1Change(w,i){
+  // When week 1 changes, auto-fill all other weeks that still match old week-1 value
+  if(w!==0)return;
+  const src=document.getElementById(`ps-0-${i}`);
+  if(!src)return;
+  const numWeeks=parseInt(document.getElementById('pm-weeks')?.value||4);
+  for(let ww=1;ww<numWeeks;ww++){
+    const dst=document.getElementById(`ps-${ww}-${i}`);
+    // Only overwrite if currently blank or same as previous week-1
+    if(dst&&(dst.value===''||dst.getAttribute('data-autofilled')==='1')){
+      dst.value=src.value;
+      dst.setAttribute('data-autofilled','1');
+    }
+  }
+}
+
 function renderPM(title){
   document.getElementById('pm-title').textContent=title;
   const ws=DB.workouts(),p=EP;
+  const numWeeks=p.weeks||4;
   document.getElementById('pm-body').innerHTML=`
     <div class="field"><label>Phase Name</label><input id="pm-name" value="${p.name}" placeholder="e.g. Hypertrophy Block"></div>
     <div class="row3 mb12">
-      <div class="field"><label>Length</label><select id="pm-weeks">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${p.weeks===n?'selected':''}>${n} wk${n>1?'s':''}</option>`).join('')}</select></div>
+      <div class="field"><label>Length</label>
+        <select id="pm-weeks" onchange="EP.weeks=parseInt(this.value);renderPMSchedule()">
+          ${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${p.weeks===n?'selected':''}>${n} wk${n>1?'s':''}</option>`).join('')}
+        </select>
+      </div>
       <div class="field"><label>Days/Week</label><select id="pm-days">${[1,2,3,4,5,6,7].map(n=>`<option value="${n}" ${p.daysPerWeek===n?'selected':''}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>Start Date</label><input type="date" id="pm-start" value="${p.startDate}"></div>
     </div>
-    <hr class="div"><div class="sec-title mb12">Assign Workouts to Days</div>
-    ${!ws.length?'<p style="color:var(--muted2);font-size:0.82rem">Build workouts first.</p>':
-      DAYS.map((d,i)=>{const s=p.schedule?.find(x=>x.day===i);return`<div class="day-assign"><div class="day-lbl">${d}</div>
-        <select id="ps-${i}" style="flex:1"><option value="">— Rest —</option>${ws.map(w=>`<option value="${w.id}" ${s?.workoutId===w.id?'selected':''}>${w.name}</option>`).join('')}</select>
-      </div>`;}).join('')}`;
+    <hr class="div">
+    <div class="fb mb8"><div class="sec-title">Assign Workouts</div><span style="font-size:0.7rem;color:var(--muted2)">Week 1 auto-fills others</span></div>
+    <div id="pm-schedule-wrap">${buildScheduleGrid(ws,p,numWeeks)}</div>`;
   document.getElementById('pm-ov').classList.add('open');
+}
+
+function renderPMSchedule(){
+  const ws=DB.workouts(),p=EP;
+  const numWeeks=p.weeks||4;
+  const wrap=document.getElementById('pm-schedule-wrap');
+  if(wrap)wrap.innerHTML=buildScheduleGrid(ws,p,numWeeks);
 }
 function savePhase(){
   const name=document.getElementById('pm-name')?.value.trim();if(!name){alert('Name your phase');return;}
-  const schedule=[];[0,1,2,3,4,5,6].forEach(i=>{const el=document.getElementById(`ps-${i}`);if(el?.value)schedule.push({day:i,workoutId:el.value});});
-  EP.name=name;EP.weeks=parseInt(document.getElementById('pm-weeks')?.value||4);
+  const numWeeks=parseInt(document.getElementById('pm-weeks')?.value||4);
+  const schedule=[];
+  for(let w=0;w<numWeeks;w++){
+    [0,1,2,3,4,5,6].forEach(i=>{
+      const el=document.getElementById(`ps-${w}-${i}`);
+      if(el?.value)schedule.push({week:w,day:i,workoutId:el.value});
+    });
+  }
+  EP.name=name;EP.weeks=numWeeks;
   EP.daysPerWeek=parseInt(document.getElementById('pm-days')?.value||5);
   EP.startDate=document.getElementById('pm-start')?.value||todayStr();EP.schedule=schedule;
   const phases=DB.phases(),idx=phases.findIndex(p=>p.id===EP.id);
