@@ -162,6 +162,12 @@ label{font-size:0.65rem;color:var(--muted2);letter-spacing:.8px;text-transform:u
 .ex-card.drag-over{border-color:var(--blue);box-shadow:0 0 0 2px rgba(74,143,212,.2)}
 .ex-card.type-run{border-color:rgba(155,127,232,.35)}
 .ex-card.type-bw{border-color:rgba(45,212,160,.25)}
+.alt-toggle-btn{background:var(--s3);border:1px solid var(--b1);color:var(--muted2);border-radius:6px;padding:6px 10px;font-size:0.68rem;font-weight:600;cursor:pointer;white-space:nowrap;font-family:'Inter',sans-serif;flex-shrink:0;transition:all .15s}
+.alt-toggle-btn.on{border-color:#fbbf24;color:#fbbf24;background:rgba(251,191,36,.08)}
+.alt-block{background:var(--s0);border:1px solid rgba(251,191,36,.25);border-radius:6px;padding:10px;margin-bottom:10px}
+.alt-label{font-size:0.62rem;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#fbbf24;margin-bottom:6px}
+.week-badge-a{display:inline-block;padding:1px 6px;border-radius:3px;font-size:0.58rem;font-weight:700;letter-spacing:.5px;text-transform:uppercase;background:rgba(255,255,255,.1);color:var(--text2);margin-right:3px}
+.week-badge-b{display:inline-block;padding:1px 6px;border-radius:3px;font-size:0.58rem;font-weight:700;letter-spacing:.5px;text-transform:uppercase;background:rgba(251,191,36,.15);color:#fbbf24;margin-right:3px}
 .ex-card-hdr{padding:9px 12px;display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--b0);background:var(--s3);cursor:pointer;user-select:none}
 .ex-drag{display:flex;flex-direction:column;gap:3px;padding:4px 2px;cursor:grab;opacity:.35;flex-shrink:0;touch-action:none}
 .ex-drag:hover{opacity:.8}
@@ -534,6 +540,30 @@ const dateStr=d=>`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
 const chkSvg=`<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
 function getActivePhase(){const id=DB.ap();return DB.phases().find(p=>p.id===id)||null;}
+function getWeekNumber(ds){
+  // Returns 1-based week number within active phase (week 1, 2, 3...)
+  const phase=getActivePhase();if(!phase)return 1;
+  const d=new Date(ds+'T12:00:00'),start=new Date(phase.startDate+'T12:00:00');
+  const diff=Math.floor((d-start)/86400000);
+  return Math.floor(diff/7)+1;
+}
+function isWeekA(ds){return getWeekNumber(ds)%2!==0;} // odd weeks = A, even = B
+
+function resolveExercises(workout,ds){
+  // Returns a copy of workout with alt exercises swapped in if it's Week B
+  if(!workout)return workout;
+  const weekA=isWeekA(ds);
+  const resolved=JSON.parse(JSON.stringify(workout));
+  resolved.exercises=resolved.exercises.map(ex=>{
+    if(ex.altName&&ex.altName.trim()&&!weekA){
+      // Week B: swap in the alt exercise name, keep same sets/type
+      return {...ex,name:ex.altName,_isAlt:true,_origName:ex.name};
+    }
+    return {...ex,_isAlt:false};
+  });
+  return resolved;
+}
+
 function getWorkoutForDate(ds){
   const phase=getActivePhase();if(!phase)return null;
   const d=new Date(ds+'T12:00:00'),start=new Date(phase.startDate+'T12:00:00');
@@ -541,7 +571,8 @@ function getWorkoutForDate(ds){
   if(diff<0||diff>=phase.weeks*7)return null;
   const s=phase.schedule.find(x=>x.day===d.getDay());
   if(!s?.workoutId)return null;
-  return DB.workouts().find(w=>w.id===s.workoutId)||null;
+  const wo=DB.workouts().find(w=>w.id===s.workoutId)||null;
+  return resolveExercises(wo,ds);
 }
 function isManualRest(ds){return DB.manualRest().includes(ds);}
 function toggleManualRest(ds){
@@ -660,7 +691,7 @@ function renderToday(){
     const isRun=ex.type==='run',isBW=ex.type==='bw';
     h+=`<div class="ex-row-preview">
       ${isRun?`<span class="tag tag-purple" style="flex-shrink:0;font-size:0.5rem">Run</span>`:isBW?`<span class="tag tag-green" style="flex-shrink:0;font-size:0.5rem">BW</span>`:`<span style="width:5px;height:5px;border-radius:50%;background:var(--b2);flex-shrink:0;display:inline-block"></span>`}
-      <span class="ex-preview-name">${ex.name||'?'}</span>
+      <span class="ex-preview-name">${ex.name||'?'}${ex._isAlt?` <span class="week-badge-b">B</span>`:''}</span>
       <span class="ex-preview-meta">${isRun?[ex.runType,ex.runDistance,ex.runTime].filter(Boolean).join(' · ')||'—':`${ex.sets?.length||0}×${ex.sets?.[0]?.reps||'?'}${!isBW&&ex.sets?.[0]?.weight?' @'+ex.sets[0].weight+'lb':''}`}</span>
     </div>`;
   });
@@ -791,7 +822,7 @@ function openLog(ds){
   if(isManualRest(ds)){if(!confirm('This day is marked as rest. Log anyway?'))return;}
   const logs=DB.logs(),xl=logs[ds];
   const d=new Date(ds+'T12:00:00');
-  document.getElementById('log-title').textContent=`${wo.name} · ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`;
+  const logWeekA=isWeekA(ds);document.getElementById('log-title').textContent=`${wo.name} · ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})} · Week ${logWeekA?'A':'B'}`;
   let h='';
   wo.exercises.forEach((ex,ei)=>{
     const exl=xl?.exercises?.[ei];
@@ -800,7 +831,7 @@ function openLog(ds){
     const lastLog=!exl?getLastLog(ex.name):null;
     h+=`<div class="log-ex ${isRun?'type-run':''}">
       <div class="log-ex-hdr">
-        <div class="log-ex-name">${ex.name}</div>
+        <div class="log-ex-name">${ex.name}${ex._isAlt?` <span class="week-badge-b">B</span>`:''}</div>
         ${isRun?'<span class="tag tag-purple">Run</span>':isBW?'<span class="tag tag-green">BW</span>':''}
         ${lastLog?'<span class="tag tag-muted" style="margin-left:auto;font-size:0.5rem">↑ Last session</span>':''}
       </div>
@@ -957,12 +988,14 @@ function dupWorkout(id){
   const ws=DB.workouts();ws.push(copy);DB.sw(ws);renderBuilderList();
 }
 function delWorkout(id){if(!confirm('Delete this workout?'))return;DB.sw(DB.workouts().filter(w=>w.id!==id));if(EW?.id===id){EW=null;renderEditor();}renderBuilderList();}
-function addEx(type){if(!EW)return;EW.exercises.push({id:uid(),name:'',type:type||'lift',sets:[{weight:'',reps:''}],runType:'',runDistance:'',runTime:'',notes:'',_custom:false,_open:true});renderEditor();}
+function addEx(type){if(!EW)return;EW.exercises.push({id:uid(),name:'',type:type||'lift',sets:[{weight:'',reps:''}],runType:'',runDistance:'',runTime:'',notes:'',altName:'',_custom:false,_customAlt:false,_showAlt:false,_open:true});renderEditor();}
 function removeEx(i){syncED();EW.exercises.splice(i,1);renderEditor();}
 function addSet(i){syncED();EW.exercises[i].sets.push({weight:'',reps:''});renderEditor();}
 function removeSet(i,si){syncED();if(EW.exercises[i].sets.length<=1)return;EW.exercises[i].sets.splice(si,1);renderEditor();}
 function setType(i,t){syncED();EW.exercises[i].type=t;renderEditor();}
 function toggleCustom(i){syncED();EW.exercises[i]._custom=!EW.exercises[i]._custom;renderEditor();}
+function toggleAlt(i){syncED();EW.exercises[i]._showAlt=!EW.exercises[i]._showAlt;if(!EW.exercises[i]._showAlt)EW.exercises[i].altName='';renderEditor();}
+function toggleCustomAlt(i){syncED();EW.exercises[i]._customAlt=!EW.exercises[i]._customAlt;renderEditor();}
 function toggleCollapse(i){syncED();EW.exercises[i]._open=!EW.exercises[i]._open;renderEditor();}
 function moveEx(idx,dir){const ni=idx+dir;if(ni<0||ni>=EW.exercises.length)return;syncED();const tmp=EW.exercises[idx];EW.exercises[idx]=EW.exercises[ni];EW.exercises[ni]=tmp;renderEditor();}
 let dragIdx=null;
@@ -978,6 +1011,8 @@ function syncED(){
     if(ex._custom){const e=document.getElementById(`ec-${ei}`);if(e)ex.name=e.value;}
     else{const e=document.getElementById(`es-${ei}`);if(e&&e.value&&e.value!=='— Select Exercise —')ex.name=e.value;}
     const nn=document.getElementById(`en-${ei}`);if(nn)ex.notes=nn.value;
+    if(ex._customAlt){const e=document.getElementById(`alt-c-${ei}`);if(e)ex.altName=e.value;}
+    else{const e=document.getElementById(`alt-s-${ei}`);if(e&&e.value&&e.value!=='— Select Exercise —')ex.altName=e.value;}
     if(ex.type==='run'){const a=document.getElementById(`ert-${ei}`),b=document.getElementById(`erd-${ei}`),cc=document.getElementById(`ertt-${ei}`);if(a)ex.runType=a.value;if(b)ex.runDistance=b.value;if(cc)ex.runTime=cc.value;}
     else{ex.sets.forEach((s,si)=>{const w=document.getElementById(`ew-${ei}-${si}`),r=document.getElementById(`er-${ei}-${si}`);if(w)s.weight=w.value;if(r)s.reps=r.value;});}
   });
@@ -1038,6 +1073,26 @@ function renderEditor(){
           <div class="add-set-btn" onclick="syncED();addSet(${ei})">+ Add Set</div>
         </div>`}
         <div class="field"><label>Notes</label><textarea id="en-${ei}" placeholder="Cues, tempo, feel...">${ex.notes||''}</textarea></div>
+        ${!isRun?`
+        <div style="margin-top:8px">
+          <button class="alt-toggle-btn ${ex._showAlt?'on':''}" onclick="toggleAlt(${ei})">
+            ${ex._showAlt?'✕ Remove Week B':'⇄ Add Week B Alternate'}
+          </button>
+          ${ex._showAlt?`
+          <div class="alt-block" style="margin-top:8px">
+            <div class="alt-label">⇄ Week B Exercise</div>
+            <div style="font-size:0.68rem;color:var(--muted2);margin-bottom:7px">Odd weeks use <span class="week-badge-a">Week A</span> · Even weeks use <span class="week-badge-b">Week B</span></div>
+            <div style="display:flex;gap:6px;align-items:center">
+              ${ex._customAlt
+                ?`<input id="alt-c-${ei}" value="${ex.altName||''}" placeholder="Type Week B exercise name...">`
+                :`<select id="alt-s-${ei}"><option value="">— Select Week B Exercise —</option>${LIB.filter(e=>e!=='— Select Exercise —').map(e=>`<option value="${e}" ${(ex.altName||'')=== e?'selected':''}>${e}</option>`).join('')}</select>`
+              }
+              <button class="toggle-custom ${ex._customAlt?'on':''}" onclick="toggleCustomAlt(${ei})" style="border-color:${ex._customAlt?'#fbbf24':'var(--b1)'};color:${ex._customAlt?'#fbbf24':'var(--muted2)'}">
+                ${ex._customAlt?'↩ List':'✎ Custom'}
+              </button>
+            </div>
+          </div>`:''}
+        </div>`:''}
       </div>
     </div>`;
   });
