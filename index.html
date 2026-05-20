@@ -298,13 +298,34 @@ label{font-size:0.65rem;color:var(--muted2);letter-spacing:.8px;text-transform:u
 .sched-chip.on{border-color:rgba(74,143,212,.4);color:var(--blue);background:var(--blueg)}
 .day-assign{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--b0)}
 .day-assign:last-child{border-bottom:none}
-.phase-grid{width:100%;border-collapse:collapse;margin-top:4px}
-.phase-grid th{font-size:0.6rem;color:var(--muted2);text-transform:uppercase;letter-spacing:.8px;font-weight:600;padding:5px 6px;text-align:center;border-bottom:1px solid var(--b0)}
-.phase-grid th.day-th{text-align:left;padding-left:2px}
-.phase-grid td{padding:4px 4px;border-bottom:1px solid var(--b0);vertical-align:middle}
-.phase-grid tr:last-child td{border-bottom:none}
-.phase-grid td select{font-size:14px;padding:6px 8px}
 .phase-day-lbl{font-family:'Barlow Condensed',sans-serif;font-size:0.88rem;font-weight:700;color:var(--muted2);letter-spacing:.5px;white-space:nowrap;padding-right:4px}
+/* Phase calendar builder */
+.pc-week-lbl{font-size:0.65rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;font-family:'Barlow Condensed',sans-serif}
+.pc-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:12px}
+.pc-day{border-radius:6px;padding:6px 3px;text-align:center;cursor:pointer;transition:all .15s;min-height:58px;display:flex;flex-direction:column;align-items:center;gap:2px;border:1px solid var(--b0);background:var(--s2);position:relative}
+.pc-day:active{transform:scale(.96)}
+.pc-day.has-workout{border-color:var(--red);background:rgba(255,255,255,.06)}
+.pc-day.rest-day{opacity:.35}
+.pc-day-nm{font-size:0.52rem;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-weight:700}
+.pc-day-n{font-family:'Barlow Condensed',sans-serif;font-size:1.2rem;font-weight:800;line-height:1;color:var(--text)}
+.pc-day-wo{font-size:0.48rem;color:var(--text2);background:rgba(255,255,255,.12);padding:2px 4px;border-radius:3px;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3}
+/* Workout picker sheet */
+.wo-picker-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:400;align-items:flex-end;justify-content:center}
+.wo-picker-ov.open{display:flex}
+.wo-picker{background:var(--s1);border-top:1px solid var(--b1);border-radius:16px 16px 0 0;width:100%;max-width:600px;max-height:70vh;overflow:hidden;display:flex;flex-direction:column}
+.wo-picker-hdr{padding:14px 16px;border-bottom:1px solid var(--b0);background:var(--s0);flex-shrink:0;display:flex;align-items:center;justify-content:space-between}
+.wo-picker-title{font-family:'Barlow Condensed',sans-serif;font-size:1.1rem;font-weight:700;letter-spacing:1px;color:var(--text2)}
+.wo-picker-list{overflow-y:auto;flex:1}
+.wo-picker-item{padding:13px 16px;border-bottom:1px solid var(--b0);cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s}
+.wo-picker-item:last-child{border-bottom:none}
+.wo-picker-item:active{background:var(--s2)}
+.wo-picker-item.selected{background:rgba(255,255,255,.06)}
+.wo-picker-item.selected .wo-picker-dot{background:var(--red)}
+.wo-picker-dot{width:8px;height:8px;border-radius:50%;background:var(--b2);flex-shrink:0}
+.wo-picker-name{font-weight:600;font-size:0.88rem;color:var(--text2)}
+.wo-picker-meta{font-size:0.72rem;color:var(--muted2);margin-top:1px}
+.wo-rest-item{padding:13px 16px;border-bottom:1px solid var(--b0);cursor:pointer;display:flex;align-items:center;gap:10px;color:var(--muted2);font-size:0.85rem;font-weight:600}
+.wo-rest-item:active{background:var(--s2)}
 .day-assign:last-child{border-bottom:none}
 .day-lbl{font-family:'Barlow Condensed',sans-serif;font-size:0.88rem;font-weight:700;letter-spacing:.5px;color:var(--muted2);min-width:48px}
 
@@ -453,6 +474,17 @@ canvas.chart{width:100%!important;height:160px!important}
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(this)">
     </div>
     <div id="backup-msg" style="margin-top:8px;font-size:0.75rem;display:none"></div>
+  </div>
+</div>
+
+<!-- WORKOUT PICKER (phase builder) -->
+<div class="wo-picker-ov" id="wo-picker-ov">
+  <div class="wo-picker">
+    <div class="wo-picker-hdr">
+      <div class="wo-picker-title" id="wo-picker-title">Pick Workout</div>
+      <button class="modal-close" onclick="closeWoPicker()">✕</button>
+    </div>
+    <div class="wo-picker-list" id="wo-picker-list"></div>
   </div>
 </div>
 
@@ -1155,88 +1187,169 @@ function dupPhase(id){
 }
 function openNewPhase(){EP={id:uid(),name:'',weeks:4,daysPerWeek:5,startDate:todayStr(),schedule:[]};renderPM('New Phase');}
 function editPhase(id){EP=JSON.parse(JSON.stringify(DB.phases().find(p=>p.id===id)));renderPM('Edit Phase');}
-function buildScheduleGrid(ws,p,numWeeks){
-  if(!ws.length)return'<p style="color:var(--muted2);font-size:0.82rem">Build workouts first.</p>';
-  const woOpts=ws.map(wo=>`<option value="${wo.id}">${wo.name}</option>`).join('');
-  // Build table: rows = days, cols = weeks
-  let h=`<div style="overflow-x:auto"><table class="phase-grid"><thead><tr>
-    <th class="day-th"></th>
-    ${Array.from({length:numWeeks},(_,w)=>`<th>Wk ${w+1}</th>`).join('')}
-  </tr></thead><tbody>`;
-  DAYS.forEach((d,i)=>{
-    h+=`<tr><td class="phase-day-lbl">${d}</td>`;
-    for(let w=0;w<numWeeks;w++){
-      const s=p.schedule?.find(x=>x.week===w&&x.day===i);
-      const fallback=p.schedule?.find(x=>x.week===undefined&&x.day===i);
-      // Week 1 (w=0) uses saved or fallback; other weeks copy week 1 as default if no specific value
-      const week1val=p.schedule?.find(x=>x.week===0&&x.day===i)?.workoutId||fallback?.workoutId||'';
-      const curVal=s?.workoutId||(w>0&&!p.schedule?.some(x=>x.week>0)?week1val:'')||'';
-      h+=`<td><select id="ps-${w}-${i}" onchange="pmWeek1Change(${w},${i})">
-        <option value="">— Rest —</option>${woOpts.replace(`value="${curVal}"`,`value="${curVal}" selected`)}
-      </select></td>`;
-    }
-    h+=`</tr>`;
-  });
-  h+=`</tbody></table></div>`;
-  return h;
+// ── PHASE CALENDAR BUILDER ──
+// EP.calSchedule = { "week-day": workoutId } e.g. "0-1" = week 0, Monday
+let woPickerTarget=null; // {week, day}
+
+function pcGetWo(week,day){
+  if(!EP)return null;
+  const key=`${week}-${day}`;
+  if(EP.calSchedule&&EP.calSchedule[key]!==undefined)return EP.calSchedule[key];
+  // fallback: read from schedule array (backward compat / editing existing)
+  const s=EP.schedule?.find(x=>x.week===week&&x.day===day);
+  if(s)return s.workoutId||'';
+  const fb=EP.schedule?.find(x=>x.week===undefined&&x.day===day);
+  return fb?.workoutId||'';
 }
 
-function pmWeek1Change(w,i){
-  // When week 1 changes, auto-fill all other weeks that still match old week-1 value
-  if(w!==0)return;
-  const src=document.getElementById(`ps-0-${i}`);
-  if(!src)return;
-  const numWeeks=parseInt(document.getElementById('pm-weeks')?.value||4);
-  for(let ww=1;ww<numWeeks;ww++){
-    const dst=document.getElementById(`ps-${ww}-${i}`);
-    // Only overwrite if currently blank or same as previous week-1
-    if(dst&&(dst.value===''||dst.getAttribute('data-autofilled')==='1')){
-      dst.value=src.value;
-      dst.setAttribute('data-autofilled','1');
+function pcSetWo(week,day,workoutId){
+  if(!EP)return;
+  if(!EP.calSchedule)EP.calSchedule={};
+  const key=`${week}-${day}`;
+  EP.calSchedule[key]=workoutId;
+  // If week 0, auto-fill other weeks that haven't been manually touched
+  if(week===0){
+    const numWeeks=EP.weeks||4;
+    for(let w=1;w<numWeeks;w++){
+      const wk=`${w}-${day}`;
+      if(!EP.calSchedule[wk]||EP.calSchedule[wk]==='__auto__'||EP.calSchedule[wk]===pcGetWo(0,day)){
+        EP.calSchedule[wk]=workoutId?workoutId:'';
+      }
     }
   }
+}
+
+function renderPMCalendar(){
+  const ws=DB.workouts(),p=EP;
+  const numWeeks=p.weeks||4;
+  const wrap=document.getElementById('pm-schedule-wrap');
+  if(!wrap)return;
+  if(!ws.length){wrap.innerHTML='<p style="color:var(--muted2);font-size:0.82rem">Build workouts first.</p>';return;}
+  let h='';
+  // Init calSchedule from schedule array if not yet set
+  if(!p.calSchedule){
+    p.calSchedule={};
+    (p.schedule||[]).forEach(s=>{
+      const w=s.week!==undefined?s.week:0;
+      p.calSchedule[`${w}-${s.day}`]=s.workoutId||'';
+    });
+    // Auto-fill weeks 1+ from week 0 for old phases
+    if(!(p.schedule||[]).some(s=>s.week>0)){
+      for(let w=1;w<numWeeks;w++){
+        [0,1,2,3,4,5,6].forEach(d=>{
+          const k=`${w}-${d}`;
+          if(!p.calSchedule[k])p.calSchedule[k]=p.calSchedule[`0-${d}`]||'';
+        });
+      }
+    }
+  }
+  // Build calendar weeks
+  const startDt=new Date((p.startDate||todayStr())+'T12:00:00');
+  for(let w=0;w<numWeeks;w++){
+    h+=`<div class="pc-week-lbl">Week ${w+1}</div><div class="pc-grid">`;
+    for(let d=0;d<7;d++){
+      const dt=new Date(startDt);dt.setDate(startDt.getDate()+w*7+d);
+      const dow=dt.getDay();
+      const woId=pcGetWo(w,dow);
+      const wo=woId?ws.find(x=>x.id===woId):null;
+      h+=`<div class="pc-day ${wo?'has-workout':''}" onclick="openWoPicker(${w},${dow})">
+        <div class="pc-day-nm">${DAYS[dow]}</div>
+        <div class="pc-day-n">${dt.getDate()}</div>
+        ${wo?`<div class="pc-day-wo">${wo.name}</div>`:''}
+      </div>`;
+    }
+    h+=`</div>`;
+  }
+  wrap.innerHTML=h;
+}
+
+function openWoPicker(week,day){
+  woPickerTarget={week,day};
+  const ws=DB.workouts();
+  const curWoId=pcGetWo(week,day);
+  const d=DAYS[day];
+  const numWeeks=EP?.weeks||4;
+  document.getElementById('wo-picker-title').textContent=`Week ${week+1} · ${d}`;
+  let h=`<div class="wo-rest-item" onclick="pickWorkout('')">
+    <div class="wo-picker-dot" style="${!curWoId?'background:var(--red)':''}"></div>
+    <span>— Rest Day —</span>
+  </div>`;
+  h+=ws.map(wo=>`<div class="wo-picker-item ${curWoId===wo.id?'selected':''}" onclick="pickWorkout('${wo.id}')">
+    <div class="wo-picker-dot"></div>
+    <div><div class="wo-picker-name">${wo.name}</div>
+    <div class="wo-picker-meta">${wo.exercises.length} exercise${wo.exercises.length!==1?'s':''}</div></div>
+  </div>`).join('');
+  // If week > 0, offer "same as week 1" shortcut
+  if(week>0){
+    const w1id=pcGetWo(0,day);
+    const w1wo=w1id?ws.find(x=>x.id===w1id):null;
+    if(w1wo)h=`<div class="wo-rest-item" style="color:var(--muted2);font-size:0.78rem;border-top:1px solid var(--b0)" onclick="pickWorkout('${w1id}')">
+      ↑ Same as Week 1 (${w1wo.name})
+    </div>`+h;
+  }
+  document.getElementById('wo-picker-list').innerHTML=h;
+  document.getElementById('wo-picker-ov').classList.add('open');
+}
+
+function pickWorkout(woId){
+  if(!woPickerTarget)return;
+  pcSetWo(woPickerTarget.week,woPickerTarget.day,woId);
+  closeWoPicker();
+  renderPMCalendar();
+}
+
+function closeWoPicker(){
+  document.getElementById('wo-picker-ov').classList.remove('open');
+  woPickerTarget=null;
 }
 
 function renderPM(title){
   document.getElementById('pm-title').textContent=title;
-  const ws=DB.workouts(),p=EP;
-  const numWeeks=p.weeks||4;
+  const p=EP;
+  // Reset calSchedule so it gets rebuilt from schedule array
+  p.calSchedule=null;
   document.getElementById('pm-body').innerHTML=`
     <div class="field"><label>Phase Name</label><input id="pm-name" value="${p.name}" placeholder="e.g. Hypertrophy Block"></div>
     <div class="row3 mb12">
       <div class="field"><label>Length</label>
-        <select id="pm-weeks" onchange="EP.weeks=parseInt(this.value);renderPMSchedule()">
+        <select id="pm-weeks" onchange="EP.weeks=parseInt(this.value);EP.calSchedule=null;renderPMCalendar()">
           ${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${p.weeks===n?'selected':''}>${n} wk${n>1?'s':''}</option>`).join('')}
         </select>
       </div>
       <div class="field"><label>Days/Week</label><select id="pm-days">${[1,2,3,4,5,6,7].map(n=>`<option value="${n}" ${p.daysPerWeek===n?'selected':''}>${n}</option>`).join('')}</select></div>
-      <div class="field"><label>Start Date</label><input type="date" id="pm-start" value="${p.startDate}"></div>
+      <div class="field"><label>Start Date</label><input type="date" id="pm-start" value="${p.startDate}" onchange="EP.startDate=this.value;renderPMCalendar()"></div>
     </div>
     <hr class="div">
-    <div class="fb mb8"><div class="sec-title">Assign Workouts</div><span style="font-size:0.7rem;color:var(--muted2)">Week 1 auto-fills others</span></div>
-    <div id="pm-schedule-wrap">${buildScheduleGrid(ws,p,numWeeks)}</div>`;
+    <div class="fb mb8">
+      <div class="sec-title">Assign Workouts</div>
+      <span style="font-size:0.7rem;color:var(--muted2)">Tap a day · Week 1 auto-fills</span>
+    </div>
+    <div id="pm-schedule-wrap"></div>`;
   document.getElementById('pm-ov').classList.add('open');
+  renderPMCalendar();
 }
 
 function renderPMSchedule(){
-  const ws=DB.workouts(),p=EP;
-  const numWeeks=p.weeks||4;
-  const wrap=document.getElementById('pm-schedule-wrap');
-  if(wrap)wrap.innerHTML=buildScheduleGrid(ws,p,numWeeks);
+  EP.calSchedule=null;
+  renderPMCalendar();
 }
 function savePhase(){
   const name=document.getElementById('pm-name')?.value.trim();if(!name){alert('Name your phase');return;}
   const numWeeks=parseInt(document.getElementById('pm-weeks')?.value||4);
+  // Convert calSchedule map back to schedule array
   const schedule=[];
-  for(let w=0;w<numWeeks;w++){
-    [0,1,2,3,4,5,6].forEach(i=>{
-      const el=document.getElementById(`ps-${w}-${i}`);
-      if(el?.value)schedule.push({week:w,day:i,workoutId:el.value});
+  if(EP.calSchedule){
+    Object.entries(EP.calSchedule).forEach(([key,woId])=>{
+      if(!woId)return;
+      const [w,d]=key.split('-').map(Number);
+      schedule.push({week:w,day:d,workoutId:woId});
     });
   }
   EP.name=name;EP.weeks=numWeeks;
   EP.daysPerWeek=parseInt(document.getElementById('pm-days')?.value||5);
-  EP.startDate=document.getElementById('pm-start')?.value||todayStr();EP.schedule=schedule;
+  EP.startDate=document.getElementById('pm-start')?.value||todayStr();
+  EP.schedule=schedule;
+  delete EP.calSchedule; // don't persist temp state
   const phases=DB.phases(),idx=phases.findIndex(p=>p.id===EP.id);
   if(idx>=0)phases[idx]=EP;else phases.push(EP);
   DB.sp(phases);closePM();renderPhases();
