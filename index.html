@@ -1314,7 +1314,7 @@ function renderPMCalendar(){
       h+=`<div class="pc-day ${wo?'has-workout':''}" onclick="openWoPicker(${w},${dow})">
         <div class="pc-day-nm">${DAYS[dow]}</div>
         <div class="pc-day-n">${dt.getDate()}</div>
-        ${wo?`<div class="pc-day-wo">${wo.name}</div>`:''}
+        ${wo?'<div class="pc-day-wo">'+wo.name+'</div>':''}
       </div>`;
     }
     h+=`</div>`;
