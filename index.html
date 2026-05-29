@@ -308,6 +308,18 @@ label{font-size:0.65rem;color:var(--muted2);letter-spacing:.8px;text-transform:u
 .sched-chip{font-size:0.62rem;padding:3px 7px;border-radius:4px;background:var(--s2);border:1px solid var(--b0);color:var(--muted2);font-weight:600}
 .sched-chip.on{border-color:rgba(74,143,212,.4);color:var(--blue);background:var(--blueg)}
 .day-assign{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--b0)}
+/* Phase summary */
+.phase-summary-session{background:var(--s2);border:1px solid var(--b0);border-radius:6px;margin-bottom:8px;overflow:hidden}
+.phase-summary-session-hdr{padding:9px 12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;gap:8px}
+.phase-summary-session-hdr:active{background:var(--s3)}
+.phase-summary-session-body{padding:0 12px 10px;border-top:1px solid var(--b0);display:none}
+.phase-summary-ex{padding-top:8px;margin-bottom:4px}
+.phase-summary-ex-name{font-size:0.8rem;font-weight:600;color:var(--text2);margin-bottom:3px;display:flex;align-items:center;gap:6px}
+.phase-summary-set{font-size:0.7rem;color:var(--muted2);font-family:'JetBrains Mono',monospace;padding:1px 0}
+.phase-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.phase-stat{background:var(--s2);border:1px solid var(--b0);border-radius:6px;padding:10px;text-align:center}
+.phase-stat-val{font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:800;line-height:1;margin-bottom:2px}
+.phase-stat-lbl{font-size:0.58rem;color:var(--muted2);letter-spacing:.6px;text-transform:uppercase;font-weight:600}
 .day-assign:last-child{border-bottom:none}
 .phase-day-lbl{font-family:'Barlow Condensed',sans-serif;font-size:0.88rem;font-weight:700;color:var(--muted2);letter-spacing:.5px;white-space:nowrap;padding-right:4px}
 /* Phase calendar builder */
@@ -499,6 +511,17 @@ canvas.chart{width:100%!important;height:160px!important}
   </div>
 </div>
 
+<!-- PHASE SUMMARY MODAL -->
+<div id="ps-overlay" class="overlay">
+  <div class="modal" style="max-height:95vh">
+    <div class="modal-hdr">
+      <div class="modal-title" id="ps-modal-title">Phase Summary</div>
+      <button class="modal-close" onclick="closePhaseSummary()">✕</button>
+    </div>
+    <div class="modal-scroll" id="ps-modal-body"></div>
+  </div>
+</div>
+
 <!-- LOG MODAL -->
 <div id="log-ov" class="overlay">
   <div class="modal">
@@ -636,6 +659,103 @@ function toggleManualRest(ds){
   if(idx>=0)mr.splice(idx,1);else mr.push(ds);
   DB.smr(mr);
 }
+function isPhaseComplete(p){
+  if(!p||!p.startDate||!p.weeks)return false;
+  const end=new Date(p.startDate+'T12:00:00');
+  end.setDate(end.getDate()+p.weeks*7);
+  return new Date()>=end;
+}
+
+function getPhaseStats(p){
+  const logs=DB.logs();
+  const start=new Date(p.startDate+'T12:00:00');
+  const end=new Date(p.startDate+'T12:00:00');
+  end.setDate(end.getDate()+p.weeks*7);
+  let sessions=0,totalVol=0,prCount=0;
+  const sessionLogs=[];
+  Object.entries(logs).forEach(([ds,log])=>{
+    const d=new Date(ds+'T12:00:00');
+    if(d>=start&&d<end){
+      sessions++;
+      const vol=calcVolume(log);
+      totalVol+=vol;
+      const prs=log.exercises.reduce((a,e)=>a+(e.sets?.filter(s=>s.pr).length||0),0);
+      prCount+=prs;
+      sessionLogs.push({ds,log,vol,prs});
+    }
+  });
+  return{sessions,totalVol,prCount,sessionLogs:sessionLogs.sort((a,b)=>b.ds.localeCompare(a.ds))};
+}
+
+function openPhaseSummary(id){
+  const phases=DB.phases();
+  const p=phases.find(x=>x.id===id);
+  if(!p)return;
+  const{sessions,totalVol,prCount,sessionLogs}=getPhaseStats(p);
+  const complete=isPhaseComplete(p);
+  document.getElementById('ps-modal-title').textContent=p.name;
+
+  let h=`<div style="font-size:0.75rem;color:var(--muted2);margin-bottom:12px">
+    ${p.weeks} week${p.weeks>1?'s':''} · Started ${p.startDate} · ${complete?'<span style="color:var(--green)">Completed</span>':'<span style="color:var(--orange)">In Progress</span>'}
+  </div>
+  <div class="phase-stat-grid">
+    <div class="phase-stat"><div class="phase-stat-val" style="color:var(--blue)">${sessions}</div><div class="phase-stat-lbl">Sessions</div></div>
+    <div class="phase-stat"><div class="phase-stat-val" style="color:var(--green)">${prCount}</div><div class="phase-stat-lbl">PRs Hit</div></div>
+    <div class="phase-stat"><div class="phase-stat-val" style="color:var(--orange);font-size:1.1rem">${totalVol>0?Math.round(totalVol/1000)+'k':'0'}</div><div class="phase-stat-lbl">Vol (lb)</div></div>
+  </div>`;
+
+  if(!sessionLogs.length){
+    h+=`<div class="empty"><p>No sessions logged during this phase yet.</p></div>`;
+  } else {
+    h+=`<div class="sec-title mb8">Session Log</div>`;
+    sessionLogs.forEach(({ds,log,vol,prs},idx)=>{
+      const d=new Date(ds+'T12:00:00');
+      const dateStr=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+      h+=`<div class="phase-summary-session">
+        <div class="phase-summary-session-hdr" onclick="togglePhaseSess('pss-${idx}')">
+          <div>
+            <div style="font-weight:600;font-size:0.85rem;color:var(--text2)">${log.workoutName}</div>
+            <div style="font-size:0.68rem;color:var(--muted2);font-family:'JetBrains Mono',monospace;margin-top:1px">${dateStr}</div>
+          </div>
+          <div class="fg">
+            ${prs?`<span class="pr-badge">🏆${prs}</span>`:''}
+            ${vol>0?`<span class="tag tag-muted" style="font-size:0.55rem">${Math.round(vol).toLocaleString()}lb</span>`:''}
+            <span style="color:var(--muted);font-size:0.65rem">▼</span>
+          </div>
+        </div>
+        <div class="phase-summary-session-body" id="pss-${idx}">
+          ${log.exercises.map(ex=>`
+            <div class="phase-summary-ex">
+              <div class="phase-summary-ex-name">
+                ${ex.name}
+                ${ex.isRun?'<span class="tag tag-purple" style="font-size:0.5rem">Run</span>':ex.isBW?'<span class="tag tag-green" style="font-size:0.5rem">BW</span>':''}
+              </div>
+              ${ex.isRun
+                ?`<div class="phase-summary-set">${[ex.runType,ex.runDistance,ex.runTime].filter(Boolean).join(' · ')||'—'}</div>`
+                :(ex.sets||[]).map((s,i)=>`<div class="phase-summary-set">
+                  Set ${i+1}: ${ex.isBW?'BW':((s.weight||'—')+'lb')} × ${s.reps||'—'} reps ${s.done?'✓':''} ${s.pr?'<span class="pr-badge">PR</span>':''}
+                </div>`).join('')
+              }
+              ${ex.notes?`<div style="font-size:0.68rem;font-style:italic;color:var(--muted);margin-top:2px">${ex.notes}</div>`:''}
+            </div>`).join('<hr style="border:none;border-top:1px solid var(--b0);margin:4px 0">')}
+        </div>
+      </div>`;
+    });
+  }
+
+  document.getElementById('ps-modal-body').innerHTML=h;
+  document.getElementById('ps-overlay').classList.add('open');
+}
+
+function togglePhaseSess(id){
+  const el=document.getElementById(id);
+  if(el)el.style.display=el.style.display==='block'?'none':'block';
+}
+
+function closePhaseSummary(){
+  document.getElementById('ps-overlay').classList.remove('open');
+}
+
 function calcStreak(){
   const logs=DB.logs();let s=0,d=new Date();
   while(true){const ds=dateStr(d);if(logs[ds]){s++;d.setDate(d.getDate()-1);}else if(ds===todayStr()){d.setDate(d.getDate()-1);}else break;}
@@ -1220,11 +1340,26 @@ function renderPhases(){
   if(!phases.length){c.innerHTML=`<div class="empty"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><p>No training phases yet.<br><strong>Create your first block.</strong></p></div>`;return;}
   c.innerHTML=phases.map(p=>{
     const isA=p.id===active;
+    const complete=isPhaseComplete(p);
+    const stats=getPhaseStats(p);
     return`<div class="phase-card ${isA?'active-p':''}">
       <div class="phase-card-hdr">
-        <div><div class="phase-name">${p.name}${isA?'<span class="tag tag-red">Active</span>':''}</div>
-        <div class="phase-meta">${p.weeks} week${p.weeks>1?'s':''} · ${p.daysPerWeek} days/week · from ${p.startDate}</div></div>
-        <div class="fg" style="flex-shrink:0">
+        <div>
+          <div class="phase-name">
+            ${p.name}
+            ${isA?'<span class="tag tag-red">Active</span>':''}
+            ${complete&&!isA?'<span class="tag tag-green">Completed</span>':''}
+            ${!complete&&!isA?'<span class="tag tag-muted">Upcoming</span>':''}
+          </div>
+          <div class="phase-meta">${p.weeks} week${p.weeks>1?'s':''} · ${p.daysPerWeek} days/week · from ${p.startDate}</div>
+          <div class="phase-meta" style="margin-top:3px;color:var(--muted2)">
+            ${stats.sessions} session${stats.sessions!==1?'s':''} logged
+            ${stats.prCount?` · ${stats.prCount} PR${stats.prCount!==1?'s':''}`:''}
+            ${stats.totalVol>0?` · ${Math.round(stats.totalVol/1000*10)/10}k lb volume`:''}
+          </div>
+        </div>
+        <div class="fg" style="flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;gap:5px">
+          <button class="btn btn-outline btn-sm" onclick="openPhaseSummary('${p.id}')">📊 Summary</button>
           ${!isA?`<button class="btn btn-red btn-sm" onclick="activatePhase('${p.id}')">Activate</button>`:''}
           <button class="btn btn-outline btn-sm" onclick="editPhase('${p.id}')">Edit</button>
           <button class="btn btn-outline btn-sm" onclick="dupPhase('${p.id}')">⎘ Copy</button>
@@ -1232,7 +1367,15 @@ function renderPhases(){
         </div>
       </div>
       <div class="phase-sched">
-        ${DAYS.map((d,i)=>{const s=p.schedule?.find(x=>x.day===i);const w=s?.workoutId?ws.find(x=>x.id===s.workoutId):null;return`<span class="sched-chip ${w?'on':''}">${d}${w?' · '+w.name.substring(0,9):''}</span>`;}).join('')}
+        ${(()=>{
+          const week1=p.schedule?.filter(s=>s.week===0||s.week===undefined)||[];
+          return DAYS.map((d,i)=>{
+            const s=week1.find(x=>x.day===i);
+            const w=s?.workoutId?ws.find(x=>x.id===s.workoutId):null;
+            return'<span class="sched-chip '+(w?'on':'')+'">'+d+(w?' · '+w.name.substring(0,9):'')+'</span>';
+          }).join('');
+        })()}
+        ${p.schedule?.some(x=>x.week>0)?'<span class="sched-chip" style="border-color:var(--orange);color:var(--orange)">Custom weeks</span>':''}
       </div>
     </div>`;
   }).join('');
