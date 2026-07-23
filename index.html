@@ -1827,18 +1827,22 @@ async function migrateToSupabase(){
   el.textContent='Migrating...';el.style.color='var(--muted2)';el.style.display='block';
   try{
     const keys=['workouts','phases','logs','prs','ap','bw','manualRest'];
+    const rows=[];
     for(const k of keys){
       const v=LS.get(k);
-      if(v!==null&&v!==undefined){
-        await fetch(`${SUPA_URL}/rest/v1/work_data`,{
-          method:'POST',headers:SUPA_HEADERS,
-          body:JSON.stringify({key:k,value:v,updated_at:new Date().toISOString()})
-        });
-      }
+      if(v!==null&&v!==undefined) rows.push({key:k,value:v,updated_at:new Date().toISOString()});
     }
-    el.textContent='✓ All data migrated to Supabase';el.style.color='var(--green)';
+    if(rows.length===0){el.textContent='No local data found to migrate';el.style.color='var(--danger)';return;}
+    const r=await fetch(`${SUPA_URL}/rest/v1/work_data`,{
+      method:'POST',
+      headers:{...SUPA_HEADERS,'Prefer':'resolution=merge-duplicates,return=representation'},
+      body:JSON.stringify(rows)
+    });
+    const body=await r.json();
+    if(!r.ok)throw new Error(JSON.stringify(body));
+    el.textContent='✓ Migrated '+rows.length+' keys to Supabase';el.style.color='var(--green)';
   }catch(e){
-    el.textContent='✕ Migration failed — check connection';el.style.color='var(--danger)';
+    el.textContent='✕ Failed: '+e.message;el.style.color='var(--danger)';
     console.error(e);
   }
 }
