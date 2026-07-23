@@ -498,6 +498,14 @@ canvas.chart{width:100%!important;height:160px!important}
     </div>
     <div id="backup-msg" style="margin-top:8px;font-size:0.75rem;display:none"></div>
   </div>
+  <div class="backup-box" style="margin-top:10px">
+    <div class="backup-box-title">☁️ Supabase Sync</div>
+    <p style="font-size:0.75rem;color:var(--muted2);margin-bottom:10px">One-time: push all local data up to Supabase.</p>
+    <div class="fwrap">
+      <button class="btn btn-outline btn-sm" onclick="migrateToSupabase()">⬆ Migrate to Cloud</button>
+    </div>
+    <div id="migrate-msg" style="margin-top:8px;font-size:0.75rem;display:none"></div>
+  </div>
 </div>
 
 <!-- WORKOUT PICKER (phase builder) -->
@@ -575,15 +583,69 @@ canvas.chart{width:100%!important;height:160px!important}
 
 <script>
 // ══ STORAGE ══
-const LS={get:k=>{try{return JSON.parse(localStorage.getItem('blk_'+k))}catch{return null}},set:(k,v)=>localStorage.setItem('blk_'+k,JSON.stringify(v))};
+const SUPA_URL='https://nirvqwuqmwjheilscyyi.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5pcnZxd3VxbXdqaGVpbHNjeXlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4Mzg1NDUsImV4cCI6MjEwMDQxNDU0NX0.VOJbqkw__zlKRJ1yJ7o-792QuwhI8imauGdRsOi2A4Q';
+const SUPA_HEADERS={'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Prefer':'resolution=merge-duplicates'};
+
+const LS={
+  get:k=>{try{return JSON.parse(localStorage.getItem('blk_'+k))}catch{return null}},
+  set:(k,v)=>localStorage.setItem('blk_'+k,JSON.stringify(v))
+};
+
+// Write to Supabase (fire-and-forget, localStorage is already updated)
+async function supaSet(key,value){
+  try{
+    await fetch(`${SUPA_URL}/rest/v1/work_data`,{
+      method:'POST',
+      headers:SUPA_HEADERS,
+      body:JSON.stringify({key,value,updated_at:new Date().toISOString()})
+    });
+  }catch(e){console.warn('Supabase write failed, localStorage has it:',e);}
+}
+
+// Read from Supabase, fall back to localStorage
+async function supaGet(key,fallback){
+  try{
+    const r=await fetch(`${SUPA_URL}/rest/v1/work_data?key=eq.${key}&select=value`,{headers:{...SUPA_HEADERS,'Prefer':''}});
+    if(!r.ok)throw new Error(r.status);
+    const d=await r.json();
+    if(d&&d[0]){LS.set(key,d[0].value);return d[0].value;}
+  }catch(e){console.warn('Supabase read failed, using localStorage:',e);}
+  return LS.get(key)??fallback;
+}
+
+// Sync all data from Supabase into localStorage on load
+async function syncFromSupabase(){
+  const keys=[
+    {k:'workouts',d:[]},{k:'phases',d:[]},{k:'logs',d:{}},
+    {k:'prs',d:{}},{k:'ap',d:null},{k:'bw',d:{}},{k:'manualRest',d:[]}
+  ];
+  try{
+    const r=await fetch(`${SUPA_URL}/rest/v1/work_data?select=key,value`,{headers:{...SUPA_HEADERS,'Prefer':''}});
+    if(!r.ok)throw new Error(r.status);
+    const rows=await r.json();
+    if(rows&&rows.length>0){
+      rows.forEach(row=>LS.set(row.key,row.value));
+      console.log('Synced from Supabase');
+    }
+  }catch(e){console.warn('Supabase sync failed, using localStorage:',e);}
+}
+
 const DB={
-  workouts:()=>LS.get('workouts')||[],phases:()=>LS.get('phases')||[],
-  logs:()=>LS.get('logs')||{},prs:()=>LS.get('prs')||{},
-  ap:()=>LS.get('ap')||null,bw:()=>LS.get('bw')||{},
+  workouts:()=>LS.get('workouts')||[],
+  phases:()=>LS.get('phases')||[],
+  logs:()=>LS.get('logs')||{},
+  prs:()=>LS.get('prs')||{},
+  ap:()=>LS.get('ap')||null,
+  bw:()=>LS.get('bw')||{},
   manualRest:()=>LS.get('manualRest')||[],
-  sw:v=>LS.set('workouts',v),sp:v=>LS.set('phases',v),
-  sl:v=>LS.set('logs',v),sr:v=>LS.set('prs',v),sa:v=>LS.set('ap',v),
-  sbw:v=>LS.set('bw',v),smr:v=>LS.set('manualRest',v)
+  sw:v=>{LS.set('workouts',v);supaSet('workouts',v);},
+  sp:v=>{LS.set('phases',v);supaSet('phases',v);},
+  sl:v=>{LS.set('logs',v);supaSet('logs',v);},
+  sr:v=>{LS.set('prs',v);supaSet('prs',v);},
+  sa:v=>{LS.set('ap',v);supaSet('ap',v);},
+  sbw:v=>{LS.set('bw',v);supaSet('bw',v);},
+  smr:v=>{LS.set('manualRest',v);supaSet('manualRest',v);}
 };
 
 
@@ -1004,7 +1066,7 @@ function openLog(ds){
   const logWeekA=isWeekA(ds);document.getElementById('log-title').textContent=`${wo.name} · ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})} · Week ${logWeekA?'A':'B'}`;
   let h='';
   wo.exercises.forEach((ex,ei)=>{
-    const exl=xl?.exercises?.[ei];
+    const exl=xl?.exercises?.find(e=>e.name===ex.name)||xl?.exercises?.[ei];
     const isRun=ex.type==='run',isBW=ex.type==='bw';
     // Pre-fill: today's saved log > last session logged > template defaults
     const lastLog=getLastLog(ex.name,ds);
@@ -1760,6 +1822,26 @@ function importData(input){
   };
   reader.readAsText(file);input.value='';
 }
+async function migrateToSupabase(){
+  const el=document.getElementById('migrate-msg');
+  el.textContent='Migrating...';el.style.color='var(--muted2)';el.style.display='block';
+  try{
+    const keys=['workouts','phases','logs','prs','ap','bw','manualRest'];
+    for(const k of keys){
+      const v=LS.get(k);
+      if(v!==null&&v!==undefined){
+        await fetch(`${SUPA_URL}/rest/v1/work_data`,{
+          method:'POST',headers:SUPA_HEADERS,
+          body:JSON.stringify({key:k,value:v,updated_at:new Date().toISOString()})
+        });
+      }
+    }
+    el.textContent='✓ All data migrated to Supabase';el.style.color='var(--green)';
+  }catch(e){
+    el.textContent='✕ Migration failed — check connection';el.style.color='var(--danger)';
+    console.error(e);
+  }
+}
 function showBMsg(msg,color){
   const el=document.getElementById('backup-msg');if(!el)return;
   el.textContent=msg;el.style.color=color;el.style.display='block';
@@ -1768,7 +1850,7 @@ function showBMsg(msg,color){
 
 
 // ══ INIT ══
-renderToday();
+syncFromSupabase().then(()=>renderToday());
 </script>
 </body>
 </html>
