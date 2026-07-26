@@ -930,10 +930,20 @@ function renderToday(){
 
   wo.exercises.forEach(ex=>{
     const isRun=ex.type==='run',isBW=ex.type==='bw';
+    // Prefer today's actual logged values over the builder template
+    const lex=logged&&logged.exercises?logged.exercises.find(e=>e.name===ex.name):null;
+    const lset=(lex&&lex.sets?lex.sets:[]).find(s=>s.reps||(s.weight&&s.weight!=='BW'));
+    const runLogged=!!(lex&&(lex.runType||lex.runDistance||lex.runTime));
+    const fromLog=isRun?runLogged:!!lset;
+    const mReps=(lset&&lset.reps)||ex.sets?.[0]?.reps||'?';
+    const mWt=(lset&&lset.weight&&lset.weight!=='BW'?lset.weight:'')||ex.sets?.[0]?.weight||'';
+    const meta=isRun
+      ?([runLogged?lex.runType:ex.runType,runLogged?lex.runDistance:ex.runDistance,runLogged?lex.runTime:ex.runTime].filter(Boolean).join(' \u00b7 ')||'\u2014')
+      :`${ex.sets?.length||0}\u00d7${mReps}${!isBW&&mWt?' @'+mWt+'lb':''}`;
     h+=`<div class="ex-row-preview">
       ${isRun?`<span class="tag tag-purple" style="flex-shrink:0;font-size:0.5rem">Run</span>`:isBW?`<span class="tag tag-green" style="flex-shrink:0;font-size:0.5rem">BW</span>`:`<span style="width:5px;height:5px;border-radius:50%;background:var(--b2);flex-shrink:0;display:inline-block"></span>`}
       <span class="ex-preview-name">${ex.name||'?'}${ex._isAlt?` <span class="week-badge-b">B</span>`:''}</span>
-      <span class="ex-preview-meta">${isRun?[ex.runType,ex.runDistance,ex.runTime].filter(Boolean).join(' · ')||'—':`${ex.sets?.length||0}×${ex.sets?.[0]?.reps||'?'}${!isBW&&ex.sets?.[0]?.weight?' @'+ex.sets[0].weight+'lb':''}`}</span>
+      <span class="ex-preview-meta"${fromLog?' style="color:var(--green)"':''}>${meta}</span>
     </div>`;
   });
 
