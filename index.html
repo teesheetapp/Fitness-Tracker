@@ -856,6 +856,65 @@ function go(name){
   if(name==='history')renderHistory();
 }
 
+// ══ TODAY STATS HELPERS ══
+function getLastSessionOfWorkout(woId,beforeDate){
+  if(!woId)return null;
+  const logs=DB.logs();
+  const dates=Object.keys(logs).sort((a,b)=>b.localeCompare(a));
+  for(const ds of dates){
+    if(ds>=beforeDate)continue;
+    if(logs[ds].workoutId===woId)return{...logs[ds],_date:ds};
+  }
+  return null;
+}
+function setsRemaining(wo,log){
+  if(!wo)return null;
+  let total=0,done=0;
+  wo.exercises.forEach(ex=>{
+    if(ex.type==='run')return;
+    total+=ex.sets?.length||0;
+    const lex=(log&&log.exercises)?log.exercises.find(e=>e.name===ex.name):null;
+    if(lex&&lex.sets)done+=lex.sets.filter(s=>s.done).length;
+  });
+  return Math.max(0,total-done);
+}
+function weekProgress(ds){
+  const phase=getActivePhase();if(!phase)return null;
+  const start=new Date(phase.startDate+'T12:00:00');
+  const diff=Math.floor((new Date(ds+'T12:00:00')-start)/86400000);
+  if(diff<0||diff>=phase.weeks*7)return null;
+  const weekIdx=Math.floor(diff/7);
+  const logs=DB.logs();
+  let sched=0,done=0;
+  for(let i=0;i<7;i++){
+    const dd=new Date(start.getTime());
+    dd.setDate(dd.getDate()+weekIdx*7+i);
+    const dstr=dateStr(dd);
+    if(logs[dstr])done++;
+    if(!isManualRest(dstr)&&getWorkoutForDate(dstr))sched++;
+  }
+  return{done,sched,week:weekIdx+1};
+}
+function bwTrend(){
+  const bw=DB.bw();
+  const dates=Object.keys(bw).filter(k=>!isNaN(parseFloat(bw[k]))).sort();
+  if(dates.length<2)return null;
+  const today=new Date(todayStr()+'T12:00:00');
+  const ago=ds=>Math.round((today-new Date(ds+'T12:00:00'))/86400000);
+  const avg=a=>a.reduce((x,ds)=>x+parseFloat(bw[ds]),0)/a.length;
+  const recent=dates.filter(ds=>ago(ds)>=0&&ago(ds)<=6);
+  const prior=dates.filter(ds=>ago(ds)>=7&&ago(ds)<=13);
+  if(recent.length&&prior.length)return avg(recent)-avg(prior);
+  // Fallback: latest reading vs nearest reading at least 7 days older
+  const past=dates.filter(ds=>ago(ds)>=0);
+  const latest=past[past.length-1];
+  if(!latest)return null;
+  const olders=dates.filter(ds=>ago(ds)>=ago(latest)+7);
+  const older=olders[olders.length-1];
+  if(!older)return null;
+  return parseFloat(bw[latest])-parseFloat(bw[older]);
+}
+
 // ══ TODAY ══
 function renderToday(){
   const c=document.getElementById('today-body');
@@ -868,6 +927,13 @@ function renderToday(){
   const prCount=Object.keys(DB.prs()).length;
   const todayVol=calcVolume(logged);
   const isMR=isManualRest(today);
+  // New Today metrics
+  const lastSess=wo?getLastSessionOfWorkout(wo.id,today):null;
+  const lastVol=lastSess?calcVolume(lastSess):0;
+  const volDelta=(logged&&lastSess)?(todayVol-lastVol):null;
+  const setsLeft=setsRemaining(wo,logged);
+  const wp=weekProgress(today);
+  const bwd=bwTrend();
 
   let h=`<div class="today-hdr">
     <div>
@@ -877,10 +943,10 @@ function renderToday(){
     ${logged?'<span class="tag tag-green">✓ Logged</span>':''}
   </div>
   <div class="stats-row">
-    <div class="stat-box"><div class="stat-val" style="color:var(--red)">${streak}</div><div class="stat-lbl">Streak</div></div>
-    <div class="stat-box"><div class="stat-val" style="color:var(--blue)">${totalSessions}</div><div class="stat-lbl">Sessions</div></div>
-    <div class="stat-box"><div class="stat-val" style="color:#cc2222">${prCount}</div><div class="stat-lbl">PRs</div></div>
-    <div class="stat-box"><div class="stat-val" style="color:#8a7a2a;font-size:1.3rem">${todayVol>0?Math.round(todayVol).toLocaleString():'—'}</div><div class="stat-lbl">Vol (lb)</div></div>
+    <div class="stat-box"><div class="stat-val" style="font-size:1.3rem;color:${volDelta===null?'var(--muted2)':(volDelta>=0?'var(--green)':'var(--red)')}">${volDelta!==null?(volDelta>=0?'+':'−')+Math.abs(Math.round(volDelta)).toLocaleString():(lastVol>0?Math.round(lastVol).toLocaleString():'—')}</div><div class="stat-lbl">${volDelta!==null?'vs Last':'Last Vol'}</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:${setsLeft===null?'var(--muted2)':(setsLeft===0?'var(--green)':'var(--orange)')}">${setsLeft===null?'—':setsLeft}</div><div class="stat-lbl">Sets Left</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:var(--blue)">${wp?`${wp.done}/${wp.sched}`:'—'}</div><div class="stat-lbl">This Week</div></div>
+    <div class="stat-box"><div class="stat-val" style="color:var(--muted2);font-size:1.3rem">${bwd===null?'—':(bwd>0?'+':'')+bwd.toFixed(1)}</div><div class="stat-lbl">BW 7d</div></div>
   </div>`;
 
   // Bodyweight quick-log
