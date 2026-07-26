@@ -935,15 +935,21 @@ function renderToday(){
     const lset=(lex&&lex.sets?lex.sets:[]).find(s=>s.reps||(s.weight&&s.weight!=='BW'));
     const runLogged=!!(lex&&(lex.runType||lex.runDistance||lex.runTime));
     const fromLog=isRun?runLogged:!!lset;
+    // Completion status for this exercise: none / part / done
+    const lsets=(lex&&lex.sets)?lex.sets:[];
+    const sTotal=isRun?0:(lsets.length||ex.sets?.length||0);
+    const sDone=isRun?0:lsets.filter(s=>s.done).length;
+    const status=isRun?(runLogged?'done':'none'):(sTotal&&sDone>=sTotal?'done':sDone>0?'part':'none');
+    const stCol=status==='done'?'var(--green)':status==='part'?'var(--orange)':'';
     const mReps=(lset&&lset.reps)||ex.sets?.[0]?.reps||'?';
     const mWt=(lset&&lset.weight&&lset.weight!=='BW'?lset.weight:'')||ex.sets?.[0]?.weight||'';
     const meta=isRun
       ?([runLogged?lex.runType:ex.runType,runLogged?lex.runDistance:ex.runDistance,runLogged?lex.runTime:ex.runTime].filter(Boolean).join(' \u00b7 ')||'\u2014')
       :`${ex.sets?.length||0}\u00d7${mReps}${!isBW&&mWt?' @'+mWt+'lb':''}`;
     h+=`<div class="ex-row-preview">
-      ${isRun?`<span class="tag tag-purple" style="flex-shrink:0;font-size:0.5rem">Run</span>`:isBW?`<span class="tag tag-green" style="flex-shrink:0;font-size:0.5rem">BW</span>`:`<span style="width:5px;height:5px;border-radius:50%;background:var(--b2);flex-shrink:0;display:inline-block"></span>`}
+      ${isRun?`<span class="tag tag-purple" style="flex-shrink:0;font-size:0.5rem">Run</span>`:isBW?`<span class="tag tag-green" style="flex-shrink:0;font-size:0.5rem">BW</span>`:`<span style="width:5px;height:5px;border-radius:50%;background:${stCol||'var(--b2)'};flex-shrink:0;display:inline-block"></span>`}
       <span class="ex-preview-name">${ex.name||'?'}${ex._isAlt?` <span class="week-badge-b">B</span>`:''}</span>
-      <span class="ex-preview-meta"${fromLog?' style="color:var(--green)"':''}>${meta}</span>
+      <span class="ex-preview-meta"${stCol?` style="color:${stCol}"`:''}>${meta}${status==='part'?` <span style="font-size:0.6rem;opacity:.8">${sDone}/${sTotal}</span>`:''}</span>
     </div>`;
   });
 
