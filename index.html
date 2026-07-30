@@ -766,6 +766,42 @@ const fmtE=v=>v?Math.round(v*10)/10:0;
 const prE1=pr=>pr?(pr.e1rm||e1rm(pr.weight,pr.reps)):0;
 
 // \u2550\u2550 MUSCLE GROUPS \u2550\u2550
+// Rebuild the entire PR table from every logged session.
+// PRs are derived, never accumulated, so corrections and deletions take effect.
+function recomputePRs(){
+  const logs=DB.logs(),out={};
+  Object.keys(logs).sort().forEach(ds=>{
+    const log=logs[ds];
+    (log.exercises||[]).forEach(ex=>{
+      if(ex.isRun||ex.isBW)return;
+      (ex.sets||[]).forEach(st=>{
+        const E=e1rm(st.weight,st.reps);
+        if(E<=0)return;
+        if(!out[ex.name]||E>prE1(out[ex.name])+0.05)
+          out[ex.name]={weight:st.weight,reps:st.reps,date:ds,workoutName:log.workoutName||'',e1rm:fmtE(E)};
+      });
+    });
+  });
+  return out;
+}
+
+// Best e1RM per exercise across every session EXCEPT one.
+// Lets a re-save flag the same PRs instead of dropping the badge.
+function bestsExcluding(excludeDate){
+  const logs=DB.logs(),best={};
+  Object.keys(logs).forEach(ds=>{
+    if(ds===excludeDate)return;
+    (logs[ds].exercises||[]).forEach(ex=>{
+      if(ex.isRun||ex.isBW)return;
+      (ex.sets||[]).forEach(st=>{
+        const E=e1rm(st.weight,st.reps);
+        if(E>(best[ex.name]||0))best[ex.name]=E;
+      });
+    });
+  });
+  return best;
+}
+
 const MUSCLES=['Chest','Back','Shoulders','Biceps','Triceps','Quads','Hamstrings','Glutes','Calves','Core','Cardio','Other'];
 // Defaults for the built-in library so existing workouts need no manual tagging
 const MUSCLE_MAP={
@@ -1522,7 +1558,8 @@ function updateComp(){
 function saveLog(){
   if(!logDate)return;
   const wo=getWorkoutForDate(logDate);if(!wo)return;
-  const logs=DB.logs(),prs=DB.prs();
+  const logs=DB.logs();
+  const priorBest=bestsExcluding(logDate);
   const exercises=wo.exercises.map((ex,ei)=>{
     const isRun=ex.type==='run',isBW=ex.type==='bw';
     const notes=document.getElementById(`ln-${ei}`)?.value||'';
@@ -1533,8 +1570,8 @@ function saveLog(){
       const done=document.getElementById(`lc-${ei}-${si}`)?.classList.contains('on')||false;
       let isPR=false;
       if(!isBW&&w&&r){
-        const ep=prs[ex.name],newE=e1rm(w,r),oldE=prE1(ep);
-        if(newE>0&&newE>oldE+0.05){isPR=true;prs[ex.name]={weight:w,reps:r,date:logDate,workoutName:wo.name,e1rm:fmtE(newE)};}
+        const E=e1rm(w,r);
+        if(E>0&&E>(priorBest[ex.name]||0)+0.05){isPR=true;priorBest[ex.name]=E;}
       }
       const rpe=document.getElementById(`lrpe-${ei}-${si}`)?.value||'';
       return{weight:w,reps:r,rpe,done,pr:isPR};
@@ -1542,7 +1579,9 @@ function saveLog(){
     return{name:ex.name,isBW,muscle:muscleFor(ex.name,ex.muscle),sets,notes};
   });
   logs[logDate]={workoutId:wo.id,workoutName:wo.name,exercises,savedAt:new Date().toISOString()};
-  DB.sl(logs);DB.sr(prs);clearDraft();stopTimer();closeLog();renderToday();
+  DB.sl(logs);
+  DB.sr(recomputePRs());
+  clearDraft();stopTimer();closeLog();renderToday();
 }
 function closeLog(){document.getElementById('log-ov').classList.remove('open');logDate=null;}
 
@@ -2256,7 +2295,10 @@ function importData(input){
       const data=JSON.parse(e.target.result);
       if(!data.workouts)throw new Error('Invalid');
       if(!confirm('Replace ALL data with this backup?'))return;
-      DB.sw(data.workouts||[]);DB.sp(data.phases||[]);DB.sl(data.logs||{});DB.sr(data.prs||{});
+      DB.sw(data.workouts||[]);DB.sp(data.phases||[]);DB.sl(data.logs||{});
+      const derived=recomputePRs(),imported=data.prs||{};
+      Object.keys(imported).forEach(k=>{if(!derived[k])derived[k]=imported[k];});
+      DB.sr(derived);
       if(data.activePhase)DB.sa(data.activePhase);
       if(data.bw)DB.sbw(data.bw);
       if(data.manualRest)DB.smr(data.manualRest);
