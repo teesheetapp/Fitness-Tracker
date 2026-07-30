@@ -386,7 +386,11 @@ label{font-size:0.65rem;color:var(--muted2);letter-spacing:.8px;text-transform:u
 .pr-card{background:var(--s1);border:1px solid var(--b0);border-radius:var(--r);padding:11px 14px;margin-bottom:7px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer}
 .pr-name{font-weight:600;font-size:0.88rem;color:var(--text2)}
 .pr-date{font-size:0.65rem;color:var(--muted2);font-family:'JetBrains Mono',monospace;margin-top:2px}
-.pr-stat{text-align:right}
+.pr-stat{text-align:right;flex-shrink:0}
+.pr-acts{display:flex;flex-direction:column;gap:4px;flex-shrink:0}
+.pr-act{width:26px;height:26px;border-radius:5px;border:1px solid var(--b1);display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--muted2);cursor:pointer;transition:all .15s}
+.pr-act:active{background:var(--s3)}
+.pr-act-del{color:var(--orange)}
 .pr-weight{font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:800;color:var(--red);line-height:1}
 .pr-reps{font-size:0.7rem;color:var(--muted2);margin-top:1px}
 
@@ -542,6 +546,29 @@ canvas.chart{width:100%!important;height:160px!important}
       <button class="modal-close" onclick="closeWoPicker()">✕</button>
     </div>
     <div class="wo-picker-list" id="wo-picker-list"></div>
+  </div>
+</div>
+
+<!-- PR EDIT MODAL -->
+<div id="pre-ov" class="overlay">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title">Edit PR · <span id="pre-title"></span></div>
+      <button class="modal-close" onclick="closePREdit()">✕</button>
+    </div>
+    <div class="modal-scroll">
+      <div class="row2">
+        <div class="field"><label>Weight (lb)</label><input type="number" id="pre-w" oninput="updatePREstimate()" placeholder="lbs"></div>
+        <div class="field"><label>Reps</label><input type="number" id="pre-r" oninput="updatePREstimate()" placeholder="reps"></div>
+      </div>
+      <div class="field mt8"><label>Date</label><input type="date" id="pre-d"></div>
+      <div id="pre-est" style="font-size:0.72rem;color:var(--orange);font-family:'JetBrains Mono',monospace;margin-top:10px"></div>
+      <p style="font-size:0.66rem;color:var(--muted);margin-top:10px">Saved values stick until you beat them. "Use Logs" recalculates this exercise from your logged sessions instead.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="revertPR()" style="flex:1">Use Logs</button>
+      <button class="btn btn-red" onclick="savePREdit()" style="flex:1">Save</button>
+    </div>
   </div>
 </div>
 
@@ -767,7 +794,7 @@ const prE1=pr=>pr?(pr.e1rm||e1rm(pr.weight,pr.reps)):0;
 
 // \u2550\u2550 MUSCLE GROUPS \u2550\u2550
 // Rebuild the entire PR table from every logged session.
-// PRs are derived, never accumulated, so corrections and deletions take effect.
+// Only run on demand — stored PRs are authoritative so manual edits survive.
 function recomputePRs(){
   const logs=DB.logs(),out={};
   Object.keys(logs).sort().forEach(ds=>{
@@ -1558,7 +1585,7 @@ function updateComp(){
 function saveLog(){
   if(!logDate)return;
   const wo=getWorkoutForDate(logDate);if(!wo)return;
-  const logs=DB.logs();
+  const logs=DB.logs(),prs=DB.prs();
   const priorBest=bestsExcluding(logDate);
   const exercises=wo.exercises.map((ex,ei)=>{
     const isRun=ex.type==='run',isBW=ex.type==='bw';
@@ -1571,7 +1598,13 @@ function saveLog(){
       let isPR=false;
       if(!isBW&&w&&r){
         const E=e1rm(w,r);
-        if(E>0&&E>(priorBest[ex.name]||0)+0.05){isPR=true;priorBest[ex.name]=E;}
+        // Ignore a stored record that came from this same session, so re-saving re-flags it
+        const stored=prs[ex.name];
+        const bar=Math.max(priorBest[ex.name]||0,(stored&&stored.date!==logDate)?prE1(stored):0);
+        if(E>0&&E>bar+0.05){
+          isPR=true;priorBest[ex.name]=E;
+          prs[ex.name]={weight:w,reps:r,date:logDate,workoutName:wo.name,e1rm:fmtE(E)};
+        }
       }
       const rpe=document.getElementById(`lrpe-${ei}-${si}`)?.value||'';
       return{weight:w,reps:r,rpe,done,pr:isPR};
@@ -1579,8 +1612,7 @@ function saveLog(){
     return{name:ex.name,isBW,muscle:muscleFor(ex.name,ex.muscle),sets,notes};
   });
   logs[logDate]={workoutId:wo.id,workoutName:wo.name,exercises,savedAt:new Date().toISOString()};
-  DB.sl(logs);
-  DB.sr(recomputePRs());
+  DB.sl(logs);DB.sr(prs);
   clearDraft();stopTimer();closeLog();renderToday();
 }
 function closeLog(){document.getElementById('log-ov').classList.remove('open');logDate=null;}
@@ -2148,11 +2180,79 @@ function renderHPRs(){
   if(!keys.length){c.innerHTML=`<div class="empty"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg><p>No PRs yet.<br>Start logging to track them.</p></div>`;return;}
   c.innerHTML=keys.map(ex=>{
     const pr=prs[ex],d=new Date(pr.date+'T12:00:00');
-    return`<div class="pr-card" onclick="renderExChart('${ex}')">
-      <div><div class="pr-name">${ex}</div><div class="pr-date">${d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} · ${pr.workoutName}</div></div>
+    const safe=ex.replace(/'/g,"\\'");
+    return`<div class="pr-card">
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="renderExChart('${safe}')">
+        <div class="pr-name">${ex}${pr.manual?' <span class="tag tag-muted" style="font-size:0.5rem">manual</span>':''}</div>
+        <div class="pr-date">${pr.date?d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—'}${pr.workoutName?' · '+pr.workoutName:''}</div>
+      </div>
       <div class="pr-stat"><div class="pr-weight">${pr.weight}lb</div><div class="pr-reps">× ${pr.reps} reps</div><div class="pr-reps" style="color:var(--orange)">e1RM ${fmtE(prE1(pr))}</div></div>
+      <div class="pr-acts">
+        <div class="pr-act" onclick="event.stopPropagation();openPREdit('${safe}')" title="Edit">✎</div>
+        <div class="pr-act pr-act-del" onclick="event.stopPropagation();deletePR('${safe}')" title="Delete">✕</div>
+      </div>
     </div>`;
   }).join('');
+  c.innerHTML+=`<div style="display:flex;justify-content:flex-end;margin-top:10px">
+    <button class="btn btn-outline btn-sm" onclick="recalcAllPRs()">↻ Rebuild from logs</button>
+  </div>`;
+}
+
+function deletePR(exName){
+  const prs=DB.prs(),pr=prs[exName];
+  if(!pr)return;
+  if(!confirm(`Delete the ${exName} PR (${pr.weight}lb × ${pr.reps})?`))return;
+  delete prs[exName];
+  DB.sr(prs);
+  renderHPRs();
+}
+
+let editingPR=null;
+function openPREdit(exName){
+  const pr=DB.prs()[exName];if(!pr)return;
+  editingPR=exName;
+  document.getElementById('pre-title').textContent=exName;
+  document.getElementById('pre-w').value=pr.weight||'';
+  document.getElementById('pre-r').value=pr.reps||'';
+  document.getElementById('pre-d').value=pr.date||todayStr();
+  updatePREstimate();
+  document.getElementById('pre-ov').classList.add('open');
+}
+function closePREdit(){document.getElementById('pre-ov').classList.remove('open');editingPR=null;}
+function updatePREstimate(){
+  const w=document.getElementById('pre-w')?.value,r=document.getElementById('pre-r')?.value;
+  const el=document.getElementById('pre-est');if(!el)return;
+  const E=e1rm(w,r);
+  el.textContent=E>0?`Estimated 1RM ${fmtE(E)} lb`:'Enter weight and reps';
+}
+function savePREdit(){
+  if(!editingPR)return;
+  const w=document.getElementById('pre-w').value.trim();
+  const r=document.getElementById('pre-r').value.trim();
+  const d=document.getElementById('pre-d').value||todayStr();
+  const E=e1rm(w,r);
+  if(E<=0){alert('Enter a weight and rep count above zero.');return;}
+  const prs=DB.prs();
+  prs[editingPR]={weight:w,reps:r,date:d,workoutName:(prs[editingPR]||{}).workoutName||'manual',e1rm:fmtE(E),manual:true};
+  DB.sr(prs);
+  closePREdit();renderHPRs();
+}
+
+// Recalculate this one exercise from the logs
+function revertPR(){
+  if(!editingPR)return;
+  const derived=recomputePRs(),prs=DB.prs();
+  if(derived[editingPR])prs[editingPR]=derived[editingPR];else delete prs[editingPR];
+  DB.sr(prs);
+  closePREdit();renderHPRs();
+}
+
+// Rebuild every PR from the logs
+function recalcAllPRs(){
+  if(!confirm('Rebuild all PRs from your logged sessions?\n\nAny manually edited values will be replaced.'))return;
+  DB.sr(recomputePRs());
+  renderHPRs();
+  showBMsg('✓ PRs rebuilt from logs','var(--green)');
 }
 
 // ══ CHARTS ══
@@ -2295,10 +2395,7 @@ function importData(input){
       const data=JSON.parse(e.target.result);
       if(!data.workouts)throw new Error('Invalid');
       if(!confirm('Replace ALL data with this backup?'))return;
-      DB.sw(data.workouts||[]);DB.sp(data.phases||[]);DB.sl(data.logs||{});
-      const derived=recomputePRs(),imported=data.prs||{};
-      Object.keys(imported).forEach(k=>{if(!derived[k])derived[k]=imported[k];});
-      DB.sr(derived);
+      DB.sw(data.workouts||[]);DB.sp(data.phases||[]);DB.sl(data.logs||{});DB.sr(data.prs||{});
       if(data.activePhase)DB.sa(data.activePhase);
       if(data.bw)DB.sbw(data.bw);
       if(data.manualRest)DB.smr(data.manualRest);
