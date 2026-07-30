@@ -275,6 +275,12 @@ label{font-size:0.65rem;color:var(--muted2);letter-spacing:.8px;text-transform:u
 .lsg-lift{grid-template-columns:26px 1fr 1fr 34px 26px}
 .lsg-bw{grid-template-columns:26px 1fr 34px 26px}
 .log-set-num{font-family:'JetBrains Mono',monospace;font-size:0.65rem;color:var(--muted2);text-align:center;background:var(--s0);border-radius:4px;padding:4px 2px}
+.sync-badge{align-self:center;font-size:0.58rem;font-family:'JetBrains Mono',monospace;letter-spacing:.3px;padding:3px 8px;border-radius:20px;white-space:nowrap;cursor:pointer;margin:0 12px;flex-shrink:0;border:1px solid transparent;transition:all .2s}
+.sync-badge.sb-ok{color:var(--muted2);border-color:var(--b1)}
+.sync-badge.sb-wait{color:var(--blue);border-color:var(--blue)}
+.sync-badge.sb-off{color:var(--muted);border-color:var(--b1)}
+.sync-badge.sb-err{color:var(--orange);border-color:var(--orange)}
+.draft-notice{display:flex;align-items:center;gap:8px;padding:8px 11px;margin-bottom:10px;border:1px solid var(--orange);border-radius:7px;font-size:0.7rem;color:var(--orange)}
 .chk{width:26px;height:26px;border-radius:5px;border:1.5px solid var(--b2);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0}
 .chk.on{background:var(--green);border-color:var(--green)}
 .chk svg{width:12px;height:12px;stroke:#07101f;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;display:none}
@@ -420,6 +426,7 @@ canvas.chart{width:100%!important;height:160px!important}
     <div class="nav-tab" onclick="go('phases')">Phases</div>
     <div class="nav-tab" onclick="go('history')">History</div>
   </div>
+  <div class="sync-badge sb-off" id="sync-badge" onclick="manualSync()">local only</div>
 </nav>
 
 <div id="page-today" class="page active"><div id="today-body"></div></div>
@@ -585,22 +592,82 @@ canvas.chart{width:100%!important;height:160px!important}
 // ══ STORAGE ══
 const SUPA_URL='https://nirvqwuqmwjheilscyyi.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5pcnZxd3VxbXdqaGVpbHNjeXlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4Mzg1NDUsImV4cCI6MjEwMDQxNDU0NX0.VOJbqkw__zlKRJ1yJ7o-792QuwhI8imauGdRsOi2A4Q';
-const SUPA_HEADERS={'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Prefer':'resolution=merge-duplicates'};
+const SUPA_HEADERS={'Content-Type':'application/json','apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Prefer':'resolution=merge-duplicates,return=representation'};
 
 const LS={
   get:k=>{try{return JSON.parse(localStorage.getItem('blk_'+k))}catch{return null}},
   set:(k,v)=>localStorage.setItem('blk_'+k,JSON.stringify(v))
 };
 
-// Write to Supabase (fire-and-forget, localStorage is already updated)
-async function supaSet(key,value){
+// \u2550\u2550 SYNC BOOKKEEPING \u2550\u2550
+const SYNC_KEYS=['workouts','phases','logs','prs','ap','bw','manualRest'];
+
+// When each key was last written locally
+const stamps=()=>{try{return JSON.parse(localStorage.getItem('blk_stamps'))||{}}catch{return{}}};
+function setStamp(k,t){const o=stamps();o[k]=t;try{localStorage.setItem('blk_stamps',JSON.stringify(o));}catch(e){}}
+
+// Keys written locally but not yet confirmed in the cloud
+const dirty=()=>{try{return JSON.parse(localStorage.getItem('blk_dirty'))||[]}catch{return[]}};
+function markDirty(k){const d=dirty();if(!d.includes(k)){d.push(k);try{localStorage.setItem('blk_dirty',JSON.stringify(d));}catch(e){}}}
+function clearDirty(k){try{localStorage.setItem('blk_dirty',JSON.stringify(dirty().filter(x=>x!==k)));}catch(e){}}
+
+let syncState='idle';   // idle | syncing | offline | error
+let lastSyncAt=null;
+
+function renderSyncBadge(){
+  const el=document.getElementById('sync-badge');
+  if(!el)return;
+  const pending=dirty().length;
+  let txt,cls;
+  if(syncState==='syncing'){txt='syncing\u2026';cls='sb-wait';}
+  else if(syncState==='offline'){txt=pending?`offline \u00b7 ${pending} pending`:'offline';cls='sb-off';}
+  else if(syncState==='error'){txt=pending?`sync failed \u00b7 ${pending} pending`:'sync failed';cls='sb-err';}
+  else if(pending){txt=`${pending} pending`;cls='sb-err';}
+  else if(lastSyncAt){
+    const m=Math.floor((Date.now()-lastSyncAt)/60000);
+    txt=m<1?'synced':m<60?`synced ${m}m ago`:`synced ${Math.floor(m/60)}h ago`;
+    cls='sb-ok';
+  }else{txt='local only';cls='sb-off';}
+  el.className='sync-badge '+cls;
+  el.textContent=txt;
+  el.title=pending?`Waiting to upload: ${dirty().join(', ')}`:'';
+}
+
+// Write to Supabase. localStorage is already updated by the caller.
+async function supaSet(key,value,keepStamp){
+  const ts=new Date().toISOString();
+  if(!keepStamp)setStamp(key,ts);
+  markDirty(key);
+  renderSyncBadge();
   try{
-    await fetch(`${SUPA_URL}/rest/v1/work_data`,{
+    const r=await fetch(`${SUPA_URL}/rest/v1/work_data`,{
       method:'POST',
       headers:SUPA_HEADERS,
-      body:JSON.stringify({key,value,updated_at:new Date().toISOString()})
+      body:JSON.stringify({key,value,updated_at:keepStamp?(stamps()[key]||ts):ts})
     });
-  }catch(e){console.warn('Supabase write failed, localStorage has it:',e);}
+    if(!r.ok){
+      const body=await r.text().catch(()=>'');
+      throw new Error('HTTP '+r.status+(body?' '+body.slice(0,120):''));
+    }
+    clearDirty(key);
+    lastSyncAt=Date.now();
+    syncState='idle';
+  }catch(e){
+    syncState=navigator.onLine?'error':'offline';
+    console.warn('Supabase write failed for',key,'\u2014 kept locally:',e.message||e);
+  }
+  renderSyncBadge();
+}
+
+// Retry every key that never made it up
+async function flushDirty(){
+  const d=dirty();
+  if(!d.length){renderSyncBadge();return;}
+  for(const k of d){
+    const v=LS.get(k);
+    if(v===null||v===undefined){clearDirty(k);continue;}
+    await supaSet(k,v,true);
+  }
 }
 
 // Read from Supabase, fall back to localStorage
@@ -614,21 +681,35 @@ async function supaGet(key,fallback){
   return LS.get(key)??fallback;
 }
 
-// Sync all data from Supabase into localStorage on load
+// Pull from Supabase into localStorage, but never clobber a newer local copy
 async function syncFromSupabase(){
-  const keys=[
-    {k:'workouts',d:[]},{k:'phases',d:[]},{k:'logs',d:{}},
-    {k:'prs',d:{}},{k:'ap',d:null},{k:'bw',d:{}},{k:'manualRest',d:[]}
-  ];
+  syncState='syncing';renderSyncBadge();
   try{
-    const r=await fetch(`${SUPA_URL}/rest/v1/work_data?select=key,value`,{headers:{...SUPA_HEADERS,'Prefer':''}});
-    if(!r.ok)throw new Error(r.status);
+    const r=await fetch(`${SUPA_URL}/rest/v1/work_data?select=key,value,updated_at`,{headers:{...SUPA_HEADERS,'Prefer':''}});
+    if(!r.ok)throw new Error('HTTP '+r.status);
     const rows=await r.json();
-    if(rows&&rows.length>0){
-      rows.forEach(row=>LS.set(row.key,row.value));
-      console.log('Synced from Supabase');
-    }
-  }catch(e){console.warn('Supabase sync failed, using localStorage:',e);}
+    const st=stamps(),d=dirty();
+    let pulled=0,kept=0;
+    (rows||[]).forEach(row=>{
+      if(!SYNC_KEYS.includes(row.key))return;
+      const localExists=localStorage.getItem('blk_'+row.key)!==null;
+      const localTs=st[row.key]?Date.parse(st[row.key]):0;
+      const cloudTs=row.updated_at?Date.parse(row.updated_at):0;
+      // Keep local if it is still waiting to upload, or is newer than the cloud row
+      if(localExists&&(d.includes(row.key)||localTs>cloudTs)){kept++;return;}
+      LS.set(row.key,row.value);
+      setStamp(row.key,row.updated_at||new Date().toISOString());
+      pulled++;
+    });
+    lastSyncAt=Date.now();
+    syncState='idle';
+    console.log(`Sync: pulled ${pulled} from cloud, kept ${kept} newer local`);
+  }catch(e){
+    syncState=navigator.onLine?'error':'offline';
+    console.warn('Supabase sync failed, using localStorage:',e.message||e);
+  }
+  renderSyncBadge();
+  await flushDirty();
 }
 
 const DB={
@@ -1236,7 +1317,7 @@ function openLog(ds){
           ${isBW?'':`<input type="number" id="lw-${ei}-${si}" value="${prefillW}" placeholder="lbs" oninput="updateComp()">`}
           <input type="number" id="lr-${ei}-${si}" value="${prefillR}" placeholder="reps" oninput="updateComp()">
           <div class="timer-btn" id="tbtn-${ei}-${si}" onclick="startTimer(${ei},${si})" title="Rest timer">⏱</div>
-          <div class="chk ${sl.done?'on':''}" id="lc-${ei}-${si}" onclick="this.classList.toggle('on');updateComp()">${chkSvg}</div>
+          <div class="chk ${sl.done?'on':''}" id="lc-${ei}-${si}" onclick="toggleSet(${ei},${si})">${chkSvg}</div>
         </div>`;
       });
     }
@@ -1248,13 +1329,78 @@ function openLog(ds){
   });
   document.getElementById('log-body').innerHTML=h;
   document.getElementById('log-ov').classList.add('open');
+  restoreDraft();
   updateComp();
 }
 
 function toggleRunDone(ei){
   document.getElementById(`lc-${ei}-run`)?.classList.toggle('on');
   updateComp();
+  queueDraft();
 }
+
+// Toggle a set: auto-starts the rest timer when checked
+function toggleSet(ei,si){
+  const el=document.getElementById(`lc-${ei}-${si}`);
+  if(!el)return;
+  el.classList.toggle('on');
+  if(el.classList.contains('on'))startTimer(ei,si);
+  else if(document.getElementById(`tbtn-${ei}-${si}`)?.classList.contains('running'))stopTimer();
+  updateComp();
+  queueDraft();
+}
+
+// \u2550\u2550 LOG DRAFT \u2014 survives the tab being evicted mid-workout \u2550\u2550
+const DRAFT_KEY='blk_draft';
+let draftTimer=null,draftRestored=false;
+const dv=id=>document.getElementById(id)?.value||'';
+const dOn=id=>document.getElementById(id)?.classList.contains('on')||false;
+
+function saveDraft(){
+  if(!logDate)return;
+  const wo=getWorkoutForDate(logDate);if(!wo)return;
+  const d={date:logDate,ts:Date.now(),ex:[]};
+  wo.exercises.forEach((ex,ei)=>{
+    if(ex.type==='run'){
+      d.ex.push({name:ex.name,isRun:true,runType:dv(`rt-${ei}`),runDistance:dv(`rd-${ei}`),runTime:dv(`rtt-${ei}`),done:dOn(`lc-${ei}-run`),notes:dv(`ln-${ei}`)});
+    }else{
+      d.ex.push({name:ex.name,notes:dv(`ln-${ei}`),sets:ex.sets.map((st,si)=>({weight:dv(`lw-${ei}-${si}`),reps:dv(`lr-${ei}-${si}`),done:dOn(`lc-${ei}-${si}`)}))});
+    }
+  });
+  try{localStorage.setItem(DRAFT_KEY,JSON.stringify(d));}catch(e){}
+}
+function queueDraft(){clearTimeout(draftTimer);draftTimer=setTimeout(saveDraft,400);}
+function getDraft(){try{return JSON.parse(localStorage.getItem(DRAFT_KEY));}catch{return null}}
+function clearDraft(){try{localStorage.removeItem(DRAFT_KEY);}catch(e){}}
+function discardDraft(){const d=logDate;clearDraft();closeLog();openLog(d);}
+
+// Lay draft values over the freshly rendered inputs. Matched by exercise name.
+function restoreDraft(){
+  draftRestored=false;
+  const d=getDraft();
+  if(!d||d.date!==logDate)return;
+  const saved=DB.logs()[logDate];
+  if(saved&&saved.savedAt&&Date.parse(saved.savedAt)>=d.ts){clearDraft();return;}
+  const wo=getWorkoutForDate(logDate);if(!wo)return;
+  const setV=(id,v)=>{const el=document.getElementById(id);if(el&&v!==''&&v!=null)el.value=v;};
+  const setC=(id,v)=>{const el=document.getElementById(id);if(el&&v)el.classList.add('on');};
+  wo.exercises.forEach((ex,ei)=>{
+    const de=(d.ex||[]).find(e=>e.name===ex.name);
+    if(!de)return;
+    if(de.isRun){
+      setV(`rt-${ei}`,de.runType);setV(`rd-${ei}`,de.runDistance);setV(`rtt-${ei}`,de.runTime);
+      setC(`lc-${ei}-run`,de.done);
+    }else{
+      (de.sets||[]).forEach((ds,si)=>{setV(`lw-${ei}-${si}`,ds.weight);setV(`lr-${ei}-${si}`,ds.reps);setC(`lc-${ei}-${si}`,ds.done);});
+    }
+    setV(`ln-${ei}`,de.notes);
+  });
+  draftRestored=true;
+  document.getElementById('log-body').insertAdjacentHTML('afterbegin',
+    `<div class="draft-notice"><span>\u26a0</span><span style="flex:1">Restored entries you hadn't saved yet. Tap Save Log to keep them.</span><span onclick="discardDraft()" style="text-decoration:underline;cursor:pointer;flex-shrink:0">Discard</span></div>`);
+}
+
+function manualSync(){syncFromSupabase();}
 
 function adjustWeight(ei,si,delta){
   const el=document.getElementById(`lw-${ei}-${si}`);
@@ -1304,7 +1450,7 @@ function saveLog(){
     return{name:ex.name,isBW,sets,notes};
   });
   logs[logDate]={workoutId:wo.id,workoutName:wo.name,exercises,savedAt:new Date().toISOString()};
-  DB.sl(logs);DB.sr(prs);stopTimer();closeLog();renderToday();
+  DB.sl(logs);DB.sr(prs);clearDraft();stopTimer();closeLog();renderToday();
 }
 function closeLog(){document.getElementById('log-ov').classList.remove('open');logDate=null;}
 
@@ -1972,6 +2118,19 @@ function showBMsg(msg,color){
 
 
 // ══ INIT ══
+// Any typing inside the log modal queues a draft write
+document.getElementById('log-body')?.addEventListener('input',queueDraft);
+
+// Retry pending uploads when connectivity or foreground returns
+window.addEventListener('online',()=>{syncState='idle';renderSyncBadge();flushDirty();});
+window.addEventListener('offline',()=>{syncState='offline';renderSyncBadge();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){flushDirty();renderSyncBadge();}});
+
+// Keep the "synced Nm ago" text honest
+setInterval(renderSyncBadge,60000);
+
+if(!navigator.onLine)syncState='offline';
+renderSyncBadge();
 syncFromSupabase().then(()=>renderToday());
 </script>
 </body>
