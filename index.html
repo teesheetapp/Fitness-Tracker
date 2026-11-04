@@ -101,6 +101,12 @@ label{font-size:0.65rem;color:var(--muted2);letter-spacing:.8px;text-transform:u
 .mt4{margin-top:4px}.mt8{margin-top:8px}.mt12{margin-top:12px}.mt16{margin-top:16px}
 .mb4{margin-bottom:4px}.mb8{margin-bottom:8px}.mb12{margin-bottom:12px}.mb16{margin-bottom:16px}
 .mono{font-family:'JetBrains Mono',monospace}
+.login-ov{position:fixed;inset:0;z-index:2000;background:var(--bg);display:none;align-items:center;justify-content:center;padding:calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom))}
+.login-ov.open{display:flex}
+.login-card{width:100%;max-width:340px;display:flex;flex-direction:column;gap:10px}
+.login-logo{font-family:'Barlow Condensed',sans-serif;font-size:3.2rem;font-weight:800;letter-spacing:10px;color:var(--red);text-align:center;line-height:1}
+.login-sub{font-size:0.78rem;color:var(--muted2);text-align:center;margin-bottom:14px}
+.login-card .btn{width:100%;padding:13px 16px;font-size:0.85rem;margin-top:4px}
 
 /* ═══ TODAY ═══ */
 .today-hdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;gap:12px}
@@ -638,6 +644,17 @@ canvas.chart{width:100%!important;height:160px!important}
   <button class="btn btn-outline btn-sm" onclick="stopTimer()">Done</button>
 </div>
 
+<div class="login-ov" id="login-ov">
+  <div class="login-card">
+    <div class="login-logo">WORK</div>
+    <div class="login-sub">Sign in to continue</div>
+    <input type="email" id="lg-email" autocomplete="username" placeholder="Email">
+    <input type="password" id="lg-pw" autocomplete="current-password" placeholder="Password" onkeydown="if(event.key==='Enter')signIn('lg')">
+    <button class="btn btn-red" onclick="signIn('lg')">Sign in</button>
+    <div id="lg-msg" style="font-size:0.75rem;text-align:center;min-height:1em;display:none"></div>
+  </div>
+</div>
+
 <script>
 // ══ STORAGE ══
 const SUPA_URL='https://nirvqwuqmwjheilscyyi.supabase.co';
@@ -657,7 +674,8 @@ function storeSession(d){
   return sess;
 }
 let authNeeded=false;   // set when the cloud rejects us; cleared on a good call
-let refreshing=null;    // one refresh at a time (Supabase rotates refresh tokens)
+let refreshing=null;
+let lastCallAsUser=false;  // a 200 from the anon key proves nothing once RLS is on    // one refresh at a time (Supabase rotates refresh tokens)
 async function refreshSession(){
   const sess=getSession();if(!sess||!sess.refresh_token)return null;
   if(refreshing)return refreshing;
@@ -678,18 +696,20 @@ async function authHeaders(prefer){
   let sess=getSession();
   if(sess&&sess.expires_at-Date.now()<120000){const n=await refreshSession();if(n)sess=n;}
   const tok=(sess&&sess.access_token&&sess.expires_at>Date.now())?sess.access_token:SUPA_KEY;
+  lastCallAsUser=tok!==SUPA_KEY;
   return {...SUPA_HEADERS,'Authorization':'Bearer '+tok,'Prefer':prefer===undefined?SUPA_HEADERS.Prefer:prefer};
 }
 const isSignedIn=()=>{const s=getSession();return !!(s&&s.refresh_token);};
 function noteAuthStatus(status){
   if(status===401||status===403){authNeeded=true;renderAccount();}
-  else if(status>=200&&status<300&&isSignedIn()&&authNeeded){authNeeded=false;renderAccount();}
+  else if(status>=200&&status<300&&lastCallAsUser&&authNeeded){authNeeded=false;renderAccount();}
 }
 
-async function signIn(){
-  const email=(document.getElementById('acct-email')?.value||'').trim();
-  const pw=document.getElementById('acct-pw')?.value||'';
-  const msg=document.getElementById('acct-msg');
+async function signIn(f){
+  f=f||'acct';
+  const email=(document.getElementById(f+'-email')?.value||'').trim();
+  const pw=document.getElementById(f+'-pw')?.value||'';
+  const msg=document.getElementById(f+'-msg');
   const say=(t,c)=>{if(msg){msg.textContent=t;msg.style.color=c;msg.style.display='block';}};
   if(!email||!pw){say('Enter your email and password.','var(--danger)');return;}
   say('Signing in\u2026','var(--muted2)');
@@ -700,15 +720,27 @@ async function signIn(){
     if(!r.ok){say(r.status===400?'Wrong email or password.':'Sign-in failed ('+r.status+'). Try again.','var(--danger)');return;}
     storeSession(d);authNeeded=false;
     say('\u2713 Signed in. Syncing\u2026','var(--green)');
+    const pwEl=document.getElementById(f+'-pw');if(pwEl)pwEl.value='';
+    hideLoginGate();
     renderAccount();
     await syncFromSupabase();renderToday();
   }catch(e){say('No connection. Your data is still saved on this phone.','var(--danger)');}
 }
+// Full-screen sign-in shown on open when signed out. Never shown mid-session.
+function showLoginGate(){
+  const ov=document.getElementById('login-ov');if(!ov)return;
+  const e=document.getElementById('lg-email');const s=getSession();
+  if(e&&!e.value)e.value=s?.email||'';
+  const m=document.getElementById('lg-msg');
+  if(m&&authNeeded&&isSignedIn()){m.textContent='Your sign-in expired. Sign in again.';m.style.color='var(--muted2)';m.style.display='block';}
+  ov.classList.add('open');
+}
+function hideLoginGate(){document.getElementById('login-ov')?.classList.remove('open');}
 function signOut(){
   // Only forgets the login. Workouts, logs and PRs stay on this phone.
   const s=getSession();
   try{localStorage.setItem(AUTH_KEY,JSON.stringify({email:s?.email||''}));}catch(e){}
-  renderAccount();renderSyncBadge();
+  renderAccount();renderSyncBadge();showLoginGate();
 }
 function renderAccount(){
   const box=document.getElementById('acct-box');if(!box)return;
@@ -2542,7 +2574,8 @@ setInterval(renderSyncBadge,60000);
 if(!navigator.onLine)syncState='offline';
 renderAccount();
 renderSyncBadge();
-syncFromSupabase().then(()=>renderToday());
+if(!isSignedIn())showLoginGate();
+syncFromSupabase().then(()=>{renderToday();if(authNeeded)showLoginGate();});
 </script>
 </body>
 </html>
