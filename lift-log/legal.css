@@ -1,0 +1,14 @@
+:root{--bg:#0a0b0d;--s1:#14171b;--b0:#262b32;--text:#a9b1bb;--text2:#eef2f6;--muted:#7c8692;--accent:#e6ebf0}
+@media (prefers-color-scheme: light){:root{--bg:#f4f5f7;--s1:#ffffff;--b0:#dde1e6;--text:#3a414a;--text2:#0f1114;--muted:#6b7480;--accent:#14171b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 'Manrope',system-ui,-apple-system,sans-serif;padding:calc(28px + env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left))}
+main{max-width:680px;margin:0 auto}
+.brand{font-family:'Saira Semi Condensed',system-ui,sans-serif;font-weight:700;letter-spacing:6px;color:var(--accent);font-size:1rem;margin-bottom:28px}
+h1{font-family:'Saira Semi Condensed',system-ui,sans-serif;font-weight:600;color:var(--text2);font-size:2rem;line-height:1.15;margin:0 0 6px;text-wrap:balance}
+h2{font-family:'Saira Semi Condensed',system-ui,sans-serif;font-weight:600;color:var(--text2);font-size:1.2rem;margin:32px 0 6px}
+.updated{color:var(--muted);font-size:.85rem;margin-bottom:24px}
+p,li{max-width:65ch}
+ul{padding-left:1.2em}
+a{color:var(--text2)}
+.card{background:var(--s1);border:1px solid var(--b0);border-radius:6px;padding:16px 18px;margin:18px 0}
+footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--b0);font-size:.85rem;color:var(--muted);display:flex;gap:18px;flex-wrap:wrap}
